@@ -1,0 +1,28 @@
+{
+  "name": "supops",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "packages/*",
+    "apps/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=@supops/server & npm run dev --workspace=@supops/web",
+    "dev:server": "npm run dev --workspace=@supops/server",
+    "dev:web": "npm run dev --workspace=@supops/web",
+    "db:generate": "npm run db:generate --workspace=@supops/db",
+    "db:migrate": "npm run db:migrate --workspace=@supops/db",
+    "seed": "npm run seed --workspace=@supops/server",
+    "test": "node --test --experimental-strip-types \"packages/**/*.test.ts\"",
+    "typecheck": "tsc -b",
+    "add-key": "npm run add-key --workspace=@supops/server --"
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2",
+    "tsx": "^4.19.2",
+    "@types/node": "^22.10.2"
+  }
+}
