@@ -1,0 +1,25 @@
+{
+  "name": "@supops/core",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "@supops/db": "*",
+    "@supops/shared": "*",
+    "drizzle-orm": "^0.45.2",
+    "nanoid": "^5.0.9",
+    "openai": "^4.77.0",
+    "pdfmake": "^0.2.23",
+    "ssh2": "^1.16.0",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/pdfmake": "^0.2.13",
+    "@types/ssh2": "^1.15.1"
+  }
+}
