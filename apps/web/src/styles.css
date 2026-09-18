@@ -1,0 +1,250 @@
+/*
+ * Latin subsets only, declared by hand.
+ *
+ * The full @fontsource packages ship every Unicode range plus legacy .woff
+ * duplicates -- 28 files. `unicode-range` means a browser downloads only what it
+ * needs at runtime, so this is a deploy-size fix rather than a performance one, but
+ * an ops console that may be copied onto a jump host shouldn't drag Cyrillic and
+ * Vietnamese cuts of two typefaces along with it.
+ *
+ * `font-display: swap` so text is readable immediately rather than invisible while
+ * the face loads.
+ */
+/*
+ * Outfit: the closest widely-available match to Aceh SoftBlack / Technica Black,
+ * both of which are commercial and not distributable. It is a geometric sans with a
+ * true black weight, so it carries the display feel of those faces while staying
+ * legible at 11px in a dense table -- which a pure display face would not.
+ */
+@font-face {
+  font-family: 'Outfit Variable';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 100 900;
+  src: url('@fontsource-variable/outfit/files/outfit-latin-wght-normal.woff2') format('woff2-variations');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 400;
+  src: url('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-400-normal.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'JetBrains Mono';
+  font-style: normal;
+  font-display: swap;
+  font-weight: 500;
+  src: url('@fontsource/jetbrains-mono/files/jetbrains-mono-latin-500-normal.woff2') format('woff2');
+}
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/**
+ * Apple-style Bento, in dark.
+ *
+ * Stored as RGB channels rather than hex so Tailwind can derive `text-muted/60`
+ * and friends through `rgb(var(--muted) / <alpha-value>)`.
+ *
+ * Every foreground below is contrast-verified against BOTH tile levels:
+ *   text 16.7:1 · muted 6.4:1 · blue 5.0:1 · green 9.0:1 · amber 8.9:1
+ *   red 5.4:1 · cyan 10.6:1 · violet 5.2:1   (all AA for normal text)
+ *
+ * `--dim` is 3.6:1 and is therefore NON-TEXT ONLY: dividers, disabled glyphs,
+ * decorative strokes. It must never be the colour of something you have to read.
+ */
+:root {
+  --ground: 8 9 15;
+  --tile: 19 21 29;
+  --tile-2: 27 30 40;
+  --hairline: 36 40 51;
+  --edge: 58 63 77;
+
+  --text: 245 245 247;
+  --muted: 152 152 159;
+  --dim: 110 110 118;
+
+  --blue: 10 132 255;
+  --blue-text: 100 169 255;
+  --green: 48 209 88;
+  --amber: 255 159 10;
+  --red: 255 69 58;
+  --cyan: 100 210 255;
+  --violet: 191 90 242;
+
+  --radius-tile: 22px;
+  --radius-inner: 14px;
+
+  /* Tiles read as raised surfaces via an inset top highlight plus a long soft
+     shadow -- not via a bright border. That is the Apple bento signature. */
+  --tile-shadow: 0 1px 0 0 rgb(255 255 255 / 0.05) inset,
+                 0 18px 40px -24px rgb(0 0 0 / 0.75);
+
+  /* One rhythm for everything (motion-consistency). Exit is ~65% of enter. */
+  --ease-out: cubic-bezier(0.2, 0.8, 0.3, 1);
+  --ease-back: cubic-bezier(0.34, 1.3, 0.64, 1);
+  --dur-enter: 320ms;
+  --dur-hover: 180ms;
+  --dur-exit: 120ms;
+
+  color-scheme: dark;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: rgb(var(--ground));
+  color: rgb(var(--text));
+  font-family: 'Outfit Variable', ui-sans-serif, system-ui, -apple-system, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Numbers that update live must not change width as they count. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+::-webkit-scrollbar { width: 10px; height: 10px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: rgb(var(--edge));
+  border-radius: 999px;
+  border: 2px solid rgb(var(--ground));
+}
+::-webkit-scrollbar-thumb:hover { background: rgb(var(--muted) / 0.5); }
+
+@layer base {
+  /* Focus must always be visible -- never removed, only restyled. */
+  :focus-visible {
+    outline: 2px solid rgb(var(--blue));
+    outline-offset: 2px;
+    border-radius: 6px;
+  }
+}
+
+@layer components {
+  .tile {
+    @apply relative rounded-[var(--radius-tile)] border border-hairline bg-tile;
+    box-shadow: var(--tile-shadow);
+  }
+
+  /* Hover lift is decorative; keyboard focus produces the same state so the
+     affordance is never hover-only. */
+  .tile-interactive {
+    @apply tile cursor-pointer;
+    transition: transform var(--dur-hover) var(--ease-out),
+                border-color var(--dur-hover) var(--ease-out),
+                background-color var(--dur-hover) var(--ease-out);
+  }
+  .tile-interactive:hover,
+  .tile-interactive:focus-within {
+    @apply border-edge;
+    transform: translateY(-2px) scale(1.01);
+  }
+
+  .btn {
+    @apply inline-flex min-h-[40px] items-center justify-center gap-2 rounded-xl px-3.5 text-sm
+           font-medium transition-colors disabled:cursor-not-allowed disabled:opacity-40;
+    transition-duration: var(--dur-hover);
+  }
+  .btn-primary { @apply btn bg-blue text-white hover:bg-blue/85; }
+  .btn-ghost   { @apply btn border border-edge bg-tile-2 text-ink hover:bg-white/5; }
+  .btn-danger  { @apply btn bg-red/90 text-white hover:bg-red; }
+  .btn-quiet   { @apply btn text-muted hover:bg-white/5 hover:text-ink; }
+
+  .input {
+    @apply w-full rounded-[var(--radius-inner)] border border-edge bg-tile-2 px-3.5 py-2.5 text-sm
+           text-ink placeholder:text-dim focus:border-blue focus:outline-none focus:ring-1 focus:ring-blue;
+    transition: border-color var(--dur-hover) var(--ease-out);
+  }
+  .label {
+    @apply mb-1.5 block text-xs font-medium uppercase tracking-wider text-muted;
+  }
+  .chip {
+    @apply inline-flex items-center gap-1.5 rounded-full border px-2 py-0.5 text-[11px] font-medium;
+  }
+  .rail {
+    @apply absolute left-0 top-0 h-full w-[3px] rounded-l-[var(--radius-tile)];
+  }
+}
+
+@layer utilities {
+  /* Staggered tile reveal. `useReveal` sets --i; the animation is inert until the
+     element is marked visible, so tiles below the fold do not animate offscreen. */
+  .reveal {
+    opacity: 0;
+    transform: translateY(12px);
+  }
+  .reveal-in {
+    animation: reveal var(--dur-enter) var(--ease-back) forwards;
+    /* Cap the stagger: it exists for the first-screen cascade. Without the cap a
+       tile far down the grid (a high --i) waits hundreds of ms after it scrolls
+       into view before it starts, which reads as lag rather than polish. */
+    animation-delay: calc(min(var(--i, 0), 3) * 45ms);
+  }
+  @keyframes reveal {
+    to { opacity: 1; transform: none; }
+  }
+
+  /* The brand mark's policy line breathes gently -- the one piece of purely
+     decorative motion in the app, kept slow enough to read as ambient. */
+  .logo-line {
+    animation: logo-breathe 3.2s var(--ease-out) infinite;
+    transform-origin: center;
+  }
+  @keyframes logo-breathe {
+    0%, 100% { opacity: 0.6; }
+    50%      { opacity: 1; }
+  }
+
+  .logo-mark {
+    transition: transform var(--dur-hover) var(--ease-back);
+  }
+  .logo-lockup:hover .logo-mark {
+    transform: translateY(-1px) scale(1.06);
+  }
+  /* Hovering "approves" the gated bars: they fill in. */
+  .logo-gated {
+    transition: fill-opacity var(--dur-hover) var(--ease-out);
+  }
+  .logo-lockup:hover .logo-gated {
+    fill-opacity: 0.35;
+  }
+
+  .pulse-ring::after {
+    content: '';
+    @apply absolute inset-0 rounded-full;
+    box-shadow: 0 0 0 0 currentColor;
+    animation: pulse-ring 2s var(--ease-out) infinite;
+  }
+  @keyframes pulse-ring {
+    70%  { box-shadow: 0 0 0 7px transparent; }
+    100% { box-shadow: 0 0 0 0 transparent; }
+  }
+}
+
+/**
+ * Reduced motion: render the final state immediately rather than a slower version
+ * of the animation. Data must be readable without waiting for motion to finish.
+ */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  .reveal { opacity: 1; transform: none; }
+  .logo-line { animation: none; opacity: 1; }
+  .logo-lockup:hover .logo-mark { transform: none; }
+  .tile-interactive:hover,
+  .tile-interactive:focus-within { transform: none; }
+}
