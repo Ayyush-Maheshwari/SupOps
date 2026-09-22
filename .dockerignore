@@ -1,0 +1,14 @@
+# Keep the build context (and image) clean: no local data, secrets, or build output.
+node_modules
+**/node_modules
+**/dist
+data
+*.db
+*.db-*
+.env
+.env.*
+.git
+.github
+.claude
+docs/plans
+npm-debug.log*
