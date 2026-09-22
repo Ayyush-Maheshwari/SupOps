@@ -11,14 +11,15 @@ services:
     # and starts empty on a fresh host -- no local data is ever baked into the image.
     volumes:
       - supops-data:/app/data
-    environment:
-      # All optional. The LLM key is normally entered in the UI (Settings > Provider),
-      # which persists to the database. Uncomment to preset instead.
-      # LLM_API_KEY: ""
-      # LLM_MODEL: "gemini-3.8-flash"
-      # SEED_ADMIN_EMAIL: "admin@supops.local"
-      # SEED_ADMIN_PASSWORD: "supops"
-      # RUN_CONCURRENCY: "1"
+    # Everything is optional — the LLM key is normally entered in the UI
+    # (Settings > Provider) and persists to the database. To preset values instead,
+    # uncomment this block AND its keys (an empty `environment:` is invalid YAML):
+    # environment:
+    #   LLM_API_KEY: ""
+    #   LLM_MODEL: "gemini-2.5-flash"
+    #   SEED_ADMIN_EMAIL: "admin@supops.local"
+    #   SEED_ADMIN_PASSWORD: "supops"
+    #   RUN_CONCURRENCY: "1"
     restart: unless-stopped
 
 volumes:
