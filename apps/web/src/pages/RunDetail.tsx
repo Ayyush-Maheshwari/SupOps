@@ -121,6 +121,7 @@ export function RunDetail() {
               <span>{run.iteration} steps</span>
               <span>{run.promptTokens + run.completionTokens} tokens</span>
               <span>{timeAgo(run.startedAt)}</span>
+              {run.startedByName && <span>started by {run.startedByName}</span>}
               {isLive && (
                 <span className={clsx('inline-flex items-center gap-1', connected ? 'text-green' : 'text-muted')}>
                   <Radio size={12} /> {connected ? 'live' : 'reconnecting'}

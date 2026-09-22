@@ -71,6 +71,9 @@ export interface Run {
   /** Console sessions stay open between turns instead of ending. */
   interactive?: boolean;
   trigger?: string;
+  /** Who started the run; `startedByName` is resolved server-side. Null for scheduled runs. */
+  startedBy?: string | null;
+  startedByName?: string | null;
   /** Present on the list endpoint: the run's risk fingerprint, in execution order. */
   actions?: RunAction[];
   targets?: string[];

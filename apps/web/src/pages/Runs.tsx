@@ -185,6 +185,12 @@ export function Runs() {
                         <StatusPill status={run.status} />
                         <span aria-hidden>·</span>
                         <span className="whitespace-nowrap">{timeAgo(run.startedAt)}</span>
+                        {run.startedByName && (
+                          <>
+                            <span aria-hidden>·</span>
+                            <span className="whitespace-nowrap">by {run.startedByName}</span>
+                          </>
+                        )}
                         {run.endedAt && (
                           <>
                             <span aria-hidden>·</span>

@@ -63,6 +63,9 @@ runRoutes.get('/', (req, res) => {
     }
   }
 
+  // Resolve who started each run to a name, so the list shows the person, not an id.
+  const startedNames = resolveUserNames(rows.map((r) => r.startedBy));
+
   // The snapshots are large and only useful on the detail view.
   res.json(
     rows.map(({ systemSnapshot, toolsSnapshot, targetsSnapshot, ...r }) => {
@@ -76,10 +79,27 @@ runRoutes.get('/', (req, res) => {
       // a VM one hop away.
       const base = primaries.length ? primaries : snapshot.map((t) => t.slug);
       const targets = [...new Set([...base, ...acted])];
-      return { ...r, targets, actions: actionsByRun.get(r.id) ?? [] };
+      return {
+        ...r,
+        targets,
+        actions: actionsByRun.get(r.id) ?? [],
+        startedByName: r.startedBy ? (startedNames.get(r.startedBy) ?? null) : null,
+      };
     }),
   );
 });
+
+/** Resolve a set of user ids to display names (name, falling back to email). */
+function resolveUserNames(ids: Array<string | null>): Map<string, string> {
+  const uniq = [...new Set(ids.filter((x): x is string => !!x))];
+  const map = new Map<string, string>();
+  if (uniq.length) {
+    for (const u of db.select().from(users).where(inArray(users.id, uniq)).all()) {
+      map.set(u.id, u.name || u.email);
+    }
+  }
+  return map;
+}
 
 const startBody = z.object({
   projectId: z.string().min(1),
@@ -129,7 +149,7 @@ runRoutes.get('/:id', (req, res) => {
   }
   const calls = db.select().from(toolCalls).where(eq(toolCalls.runId, run.id)).orderBy(asc(toolCalls.callIndex)).all();
   res.json({
-    run,
+    run: { ...run, startedByName: run.startedBy ? (resolveUserNames([run.startedBy]).get(run.startedBy) ?? null) : null },
     steps: db.select().from(runSteps).where(eq(runSteps.runId, run.id)).orderBy(asc(runSteps.seq)).all(),
     // Resolve approver ids to names so the run page can show WHO decided each action,
     // not an opaque id.
