@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { Plus, ShieldCheck, UserPlus } from 'lucide-react';
-import { api, patch, post } from '../lib/api';
+import { api, del, patch, post } from '../lib/api';
 import { PageHeader } from '../components/Layout';
 import { Empty, Field, Panel, Spinner } from '../components/ui';
 import type { AdminUser } from '../lib/types';
@@ -30,6 +30,10 @@ export function Users() {
   });
   const update = useMutation({
     mutationFn: ({ id, body }: { id: string; body: Record<string, unknown> }) => patch<AdminUser>(`/users/${id}`, body),
+    onSuccess: invalidate,
+  });
+  const remove = useMutation({
+    mutationFn: (id: string) => del(`/users/${id}`),
     onSuccess: invalidate,
   });
 
@@ -121,6 +125,17 @@ export function Users() {
                   >
                     {u.disabledAt ? 'Enable' : 'Disable'}
                   </button>
+                  <button
+                    className="btn-ghost !min-h-[32px] !text-xs !text-red hover:!bg-red/10"
+                    title="Permanently delete this user (their past attribution becomes unknown). Disable is safer."
+                    onClick={() => {
+                      if (window.confirm(`Permanently delete ${u.name} (${u.email})? Their past runs/approvals will lose attribution. Disabling is usually safer.`)) {
+                        remove.mutate(u.id);
+                      }
+                    }}
+                  >
+                    Delete
+                  </button>
                 </li>
               ))}
             </ul>
@@ -131,6 +146,9 @@ export function Users() {
 
         {update.error && (
           <p className="text-sm text-red">{update.error instanceof Error ? update.error.message : 'Could not update user'}</p>
+        )}
+        {remove.error && (
+          <p className="text-sm text-red">{remove.error instanceof Error ? remove.error.message : 'Could not delete user'}</p>
         )}
       </div>
     </>

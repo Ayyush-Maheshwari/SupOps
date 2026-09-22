@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { desc, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
-import { users } from '@supops/db';
+import { alerts, healthChecks, runs, toolCalls, users } from '@supops/db';
 import { db } from '../context.ts';
 import { config } from '../config.ts';
 import { ADMIN_ROLES, emailDomainAllowed, hashPassword, requireRole } from '../auth.ts';
@@ -116,4 +116,43 @@ userRoutes.patch('/:id', (req, res) => {
 
   const row = db.update(users).set(set).where(eq(users.id, target.id)).returning().get();
   res.json(publicUser(row));
+});
+
+/**
+ * Permanently delete a user. Prefer disabling (keeps attribution), but a hard delete
+ * is offered for admins/owners. Their past runs/approvals stay in the record with the
+ * attribution nulled out (shown as unknown) rather than dangling on a missing FK.
+ */
+userRoutes.delete('/:id', (req, res) => {
+  const target = db.select().from(users).where(eq(users.id, req.params.id)).get();
+  if (!target) {
+    res.status(404).json({ error: 'User not found' });
+    return;
+  }
+  if (req.user?.id === target.id) {
+    res.status(400).json({ error: 'You cannot delete your own account.' });
+    return;
+  }
+  if (ADMIN_ROLES.includes(target.globalRole)) {
+    const otherActiveAdmins = db
+      .select()
+      .from(users)
+      .where(ne(users.id, target.id))
+      .all()
+      .filter((u) => ADMIN_ROLES.includes(u.globalRole) && !u.disabledAt);
+    if (otherActiveAdmins.length === 0) {
+      res.status(409).json({ error: 'This is the last active admin; promote another user first.' });
+      return;
+    }
+  }
+
+  // Null the attribution FKs first (all are `no action`), then remove the user.
+  db.transaction((tx) => {
+    tx.update(runs).set({ startedBy: null }).where(eq(runs.startedBy, target.id)).run();
+    tx.update(toolCalls).set({ decidedBy: null }).where(eq(toolCalls.decidedBy, target.id)).run();
+    tx.update(alerts).set({ decidedBy: null }).where(eq(alerts.decidedBy, target.id)).run();
+    tx.update(healthChecks).set({ startedBy: null }).where(eq(healthChecks.startedBy, target.id)).run();
+    tx.delete(users).where(eq(users.id, target.id)).run();
+  });
+  res.json({ ok: true });
 });
