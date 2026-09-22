@@ -15,6 +15,9 @@ export function Users() {
   const [form, setForm] = useState({ name: '', email: '', globalRole: 'member', password: '' });
 
   const users = useQuery({ queryKey: ['users'], queryFn: () => api<AdminUser[]>('/users') });
+  const authCfg = useQuery({ queryKey: ['authConfig'], queryFn: () => api<{ allowedEmailDomains: string[] }>('/auth/config') });
+  const domains = authCfg.data?.allowedEmailDomains ?? [];
+  const emailOk = domains.length === 0 || domains.includes(form.email.trim().toLowerCase().split('@')[1] ?? '');
   const invalidate = () => void qc.invalidateQueries({ queryKey: ['users'] });
 
   const create = useMutation({
@@ -47,7 +50,12 @@ export function Users() {
           <Panel title="New user" accent="bg-violet">
             <div className="grid gap-4 p-4 sm:grid-cols-2">
               <Field label="Name"><input className="input" value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-              <Field label="Email"><input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} /></Field>
+              <Field
+                label="Email"
+                hint={domains.length ? `Must be @${domains.join(' or @')}` : undefined}
+              >
+                <input className="input" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
+              </Field>
               <Field label="Role">
                 <select className="input" value={form.globalRole} onChange={(e) => setForm({ ...form, globalRole: e.target.value })}>
                   {ROLES.map((r) => <option key={r} value={r}>{r}</option>)}
@@ -59,7 +67,7 @@ export function Users() {
               <div className="flex items-center gap-2 sm:col-span-2">
                 <button
                   className="btn-primary"
-                  disabled={create.isPending || !form.name || !form.email || form.password.length < 6}
+                  disabled={create.isPending || !form.name || !form.email || !emailOk || form.password.length < 6}
                   onClick={() => create.mutate()}
                 >
                   {create.isPending ? <Spinner /> : <Plus size={15} />} Create user

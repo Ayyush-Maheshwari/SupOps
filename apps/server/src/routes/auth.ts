@@ -3,9 +3,15 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import { users } from '@supops/db';
 import { db } from '../context.ts';
+import { config } from '../config.ts';
 import { requireAuth, signToken, verifyPassword } from '../auth.ts';
 
 export const authRoutes = Router();
+
+/** Public, non-sensitive auth config for the UI (e.g. the account email-domain rule). */
+authRoutes.get('/config', (_req, res) => {
+  res.json({ allowedEmailDomains: config.authAllowedDomains });
+});
 
 const loginBody = z.object({ email: z.string().email(), password: z.string().min(1) });
 

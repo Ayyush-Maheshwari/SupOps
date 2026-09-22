@@ -37,6 +37,16 @@ export const config = {
   jwtSecret: process.env.JWT_SECRET ?? devSecret,
   jwtSecretIsEphemeral: !process.env.JWT_SECRET,
   runConcurrency: Number(process.env.RUN_CONCURRENCY ?? 1),
+  /**
+   * Restrict new accounts to these email domains (comma-separated). Empty = no
+   * restriction (the open-source default). Set e.g. AUTH_ALLOWED_EMAIL_DOMAIN=acme.com
+   * on an internal deployment to make it org-only. Enforced at account creation, never
+   * at login, so a break-glass local admin can always sign in.
+   */
+  authAllowedDomains: (process.env.AUTH_ALLOWED_EMAIL_DOMAIN ?? '')
+    .split(',')
+    .map((d) => d.trim().toLowerCase())
+    .filter(Boolean),
   llm: {
     baseUrl: process.env.LLM_BASE_URL ?? 'https://generativelanguage.googleapis.com/v1beta/openai/',
     apiKey: process.env.LLM_API_KEY ?? '',
@@ -52,5 +62,8 @@ export function warnAboutConfig(): void {
   if (!config.llm.apiKey) {
     console.warn('  ! LLM_API_KEY is unset. Runs will fail until you set one in .env.');
     console.warn('    Free Gemini key: https://aistudio.google.com/apikey');
+  }
+  if (config.authAllowedDomains.length) {
+    console.log(`  accounts restricted to: ${config.authAllowedDomains.map((d) => '@' + d).join(', ')}`);
   }
 }

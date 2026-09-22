@@ -20,6 +20,8 @@ services:
     #   SEED_ADMIN_EMAIL: "admin@supops.local"
     #   SEED_ADMIN_PASSWORD: "supops"
     #   RUN_CONCURRENCY: "1"
+    #   # Internal/org-only deployment: restrict new accounts to your domain(s)
+    #   AUTH_ALLOWED_EMAIL_DOMAIN: "definitive.com"
     restart: unless-stopped
 
 volumes:

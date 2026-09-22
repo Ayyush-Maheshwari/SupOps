@@ -1,0 +1,1 @@
+Introducing SupOps — a self-hosted AI SRE that investigates and fixes your servers from real evidence, but stops and asks before anything risky. Give it root, keep control.

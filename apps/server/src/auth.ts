@@ -58,6 +58,17 @@ export function requireAuth(req: Request, res: Response, next: NextFunction): vo
   }
 }
 
+/**
+ * Whether an email may be used for a NEW account. Open by default; when
+ * `AUTH_ALLOWED_EMAIL_DOMAIN` is set, the address must be on one of those domains.
+ * Enforced only at account creation — never at login.
+ */
+export const emailDomainAllowed = (email: string): boolean => {
+  if (config.authAllowedDomains.length === 0) return true;
+  const domain = email.trim().toLowerCase().split('@')[1] ?? '';
+  return config.authAllowedDomains.includes(domain);
+};
+
 /** The admin tier for account management. `owner` and `admin` are equivalent here. */
 export const ADMIN_ROLES = ['owner', 'admin'];
 export const isAdmin = (user: AuthUser | undefined): boolean =>

@@ -1,0 +1,303 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=1920, height=1080" />
+    <title>SupOps — brag</title>
+    <script src="https://cdn.jsdelivr.net/npm/gsap@3.14.2/dist/gsap.min.js"></script>
+    <style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { width: 1920px; height: 1080px; overflow: hidden; background: #05060B; }
+      #root {
+        width: 100%; height: 100%; position: relative; overflow: hidden;
+        background: #05060B; color: #F5F7FA;
+        font-family: ui-sans-serif, system-ui, sans-serif;
+      }
+      .clip { position: absolute; inset: 0; display: grid; place-items: center; overflow: hidden; }
+      .mono { font-family: ui-monospace, monospace; }
+
+      /* animated colorful glow orbs, per scene */
+      .orb { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.55; pointer-events: none; }
+      .center { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 30px; z-index: 3; }
+
+      .kchip { font-size: 24px; font-weight: 800; letter-spacing: 0.22em; text-transform: uppercase;
+        padding: 12px 26px; border-radius: 999px; background: rgba(255,255,255,0.06);
+        border: 1px solid rgba(255,255,255,0.16); color: #EAF0F7; }
+
+      /* logo */
+      .logo { display: block; }
+      #s1 .logo { width: 720px; filter: drop-shadow(0 20px 70px rgba(10,132,255,0.6)); }
+      #s7 .logo { width: 640px; filter: drop-shadow(0 20px 70px rgba(10,132,255,0.6)); }
+
+      .huge { font-weight: 900; letter-spacing: -0.03em; line-height: 1.02; text-align: center; }
+      #s1 .huge { font-size: 96px; }
+      #s1 .huge .g { background: linear-gradient(90deg,#4FA8FF,#8A63D2,#32D74B); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      #s1 .sub { font-size: 38px; font-weight: 600; color: #C7CEDA; }
+
+      /* browser frame for screenshots */
+      .frame { width: 1580px; height: 900px; border-radius: 22px; overflow: hidden; position: relative; z-index: 3;
+        border: 1px solid #2A2F3B; background: #0C0E14; box-shadow: 0 40px 120px rgba(0,0,0,0.65), 0 0 0 6px rgba(10,132,255,0.10); }
+      .fbar { height: 56px; display: flex; align-items: center; gap: 12px; padding: 0 24px; border-bottom: 1px solid #23283360; background: #10131B; position: relative; z-index: 2; }
+      .fdot { width: 14px; height: 14px; border-radius: 50%; }
+      .ftitle { margin-left: 10px; font-size: 20px; color: #8B93A3; }
+      .shotwrap { position: absolute; inset: 56px 0 0 0; overflow: hidden; }
+      .shot { width: 100%; display: block; }
+
+      /* floating stat callouts */
+      .callout { position: absolute; z-index: 6; padding: 16px 24px; border-radius: 16px; font-weight: 800;
+        display: flex; align-items: baseline; gap: 10px; box-shadow: 0 16px 50px rgba(0,0,0,0.5); border: 1px solid; }
+      .callout .n { font-size: 46px; }
+      .callout .l { font-size: 22px; font-weight: 700; letter-spacing: 0.02em; }
+      .c-green { background: #0d2417; border-color: rgba(50,215,75,0.5); color: #32D74B; }
+      .c-blue  { background: #0b1c33; border-color: rgba(79,168,255,0.5); color: #4FA8FF; }
+      .c-violet{ background: #1a1330; border-color: rgba(138,99,210,0.55); color: #B79BFF; }
+      .c-amber { background: #2a1e08; border-color: rgba(245,166,35,0.55); color: #F5A623; }
+      .c-cyan  { background: #07272e; border-color: rgba(90,200,230,0.5); color: #6FD0E6; }
+
+      .head-pill { position: absolute; z-index: 6; top: 90px; left: 50%; transform: translateX(-50%);
+        font-size: 30px; font-weight: 900; letter-spacing: 0.14em; text-transform: uppercase;
+        padding: 14px 30px; border-radius: 999px; background: rgba(5,6,11,0.72); border: 1px solid rgba(255,255,255,0.18); }
+
+      /* investigate overlay card */
+      .glasscard { position: absolute; z-index: 7; width: 1120px; padding: 40px 46px; border-radius: 20px;
+        background: rgba(10,12,19,0.92); border: 1px solid #2A2F3B; box-shadow: 0 30px 90px rgba(0,0,0,0.6), 0 0 0 5px rgba(10,132,255,0.12); }
+      .glasscard .lab { font-size: 22px; font-weight: 800; letter-spacing: 0.14em; color: #8B93A3; text-transform: uppercase; }
+      .glasscard .typed { margin-top: 16px; font-size: 48px; font-weight: 700; color: #F5F7FA; }
+      .glasscard .typed .w { display: inline-block; }
+      .glasscard .btn { margin-top: 26px; display: inline-flex; align-items: center; gap: 12px; font-size: 26px; font-weight: 800; color: #fff; background: #0A84FF; padding: 15px 32px; border-radius: 14px; box-shadow: 0 12px 40px rgba(10,132,255,0.5); }
+
+      /* command chips (console scene) */
+      .cmdchip { position: absolute; z-index: 7; display: flex; align-items: center; gap: 16px; font-size: 30px;
+        background: rgba(9,11,17,0.94); border: 1px solid #23283b; border-radius: 14px; padding: 16px 24px; box-shadow: 0 16px 44px rgba(0,0,0,0.55); }
+      .cmdchip .p { color: #4FA8FF; }
+      .cmdchip .t { color: #EAF0F7; }
+      .cmdchip .pill { font-size: 20px; font-weight: 800; color: #32D74B; background: rgba(50,215,75,0.14); border: 1px solid rgba(50,215,75,0.4); border-radius: 999px; padding: 6px 14px; }
+
+      /* risk bar scene */
+      #s5 .barwrap { width: 1500px; z-index: 3; }
+      #s5 .head { font-size: 64px; font-weight: 900; letter-spacing: -0.02em; text-align: center; margin-bottom: 40px; }
+      #s5 .head .g { background: linear-gradient(90deg,#32D74B,#4FA8FF,#F5A623,#FF453A); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      #s5 .bar { display: flex; height: 90px; border-radius: 18px; overflow: hidden; box-shadow: 0 20px 60px rgba(0,0,0,0.5); }
+      #s5 .seg { transform-origin: left center; display: flex; align-items: center; justify-content: center; font-weight: 800; font-size: 26px; color: #05060B; }
+      #s5 .labels { display: flex; margin-top: 22px; }
+      #s5 .lg { flex: 1; text-align: center; font-size: 24px; font-weight: 700; }
+
+      /* gate scene */
+      #s6 .card { width: 1240px; padding: 50px 56px; border-radius: 22px; z-index: 4;
+        background: #0C0E14; border: 1px solid #2A2F3B; box-shadow: 0 40px 120px rgba(0,0,0,0.65), 0 0 0 6px rgba(245,166,35,0.12); }
+      #s6 .lab { font-size: 24px; font-weight: 800; letter-spacing: 0.14em; color: #8B93A3; text-transform: uppercase; }
+      #s6 .cmdline { margin-top: 10px; font-size: 50px; font-weight: 800; }
+      #s6 .cmdline .k { color: #FF9F0A; }
+      #s6 .badges { margin-top: 28px; position: relative; height: 62px; }
+      #s6 .badge { position: absolute; left: 0; top: 0; font-size: 30px; font-weight: 900; letter-spacing: 0.03em; padding: 13px 26px; border-radius: 12px; display: inline-flex; align-items: center; gap: 12px; }
+      #s6 .pending { color: #F5A623; background: rgba(245,166,35,0.16); border: 1px solid rgba(245,166,35,0.5); }
+      #s6 .done { color: #32D74B; background: rgba(50,215,75,0.16); border: 1px solid rgba(50,215,75,0.5); }
+      #s6 .actions { margin-top: 40px; display: flex; gap: 18px; }
+      #s6 .btn { font-size: 27px; font-weight: 800; padding: 16px 34px; border-radius: 14px; }
+      #s6 .approve { background: #0A84FF; color: #fff; box-shadow: 0 12px 40px rgba(10,132,255,0.5); }
+      #s6 .reject { background: transparent; color: #C7CEDA; border: 1px solid #333947; }
+      #s6 .cursor { position: absolute; z-index: 9; width: 42px; height: 42px; }
+      #s6 .cursor svg { width: 42px; height: 42px; filter: drop-shadow(0 4px 8px rgba(0,0,0,0.6)); }
+
+      /* outro */
+      #s7 .tag { font-size: 64px; font-weight: 900; letter-spacing: -0.02em; text-align: center; }
+      #s7 .tag .b { background: linear-gradient(90deg,#4FA8FF,#32D74B); -webkit-background-clip: text; background-clip: text; color: transparent; }
+      #s7 .url { font-size: 26px; color: #8B93A3; }
+      #s7 .small { font-size: 24px; letter-spacing: 0.14em; color: #6FD0E6; text-transform: uppercase; font-weight: 700; }
+    </style>
+  </head>
+  <body>
+    <div id="root" data-composition-id="main" data-start="0" data-duration="23.2" data-width="1920" data-height="1080">
+
+      <!-- S1 HOOK -->
+      <section id="s1" class="clip" data-start="0" data-duration="2.8" data-track-index="0">
+        <span class="orb" id="s1-o1" style="width:640px;height:640px;background:#0A84FF;left:120px;top:-120px"></span>
+        <span class="orb" id="s1-o2" style="width:560px;height:560px;background:#8A63D2;right:80px;bottom:-160px"></span>
+        <span class="orb" id="s1-o3" style="width:420px;height:420px;background:#32D74B;left:44%;bottom:-200px;opacity:0.35"></span>
+        <div class="center">
+          <img class="logo" id="s1-logo" src="assets/img/logo.png" alt="SupOps" />
+          <div class="huge">Your servers just got <span class="g">an SRE.</span></div>
+          <div class="sub">It investigates. It fixes. It asks first.</div>
+        </div>
+      </section>
+
+      <!-- S2 DASHBOARD -->
+      <section id="s2" class="clip" data-start="2.8" data-duration="3.8" data-track-index="0">
+        <span class="orb" style="width:600px;height:600px;background:#0A84FF;left:-140px;top:-120px;opacity:0.4"></span>
+        <span class="orb" style="width:520px;height:520px;background:#32D74B;right:-120px;bottom:-140px;opacity:0.3"></span>
+        <div class="frame" id="s2-frame">
+          <div class="fbar"><span class="fdot" style="background:#FF5F57"></span><span class="fdot" style="background:#FEBC2E"></span><span class="fdot" style="background:#28C840"></span><span class="ftitle mono">SupOps — Dashboard</span></div>
+          <div class="shotwrap"><img class="shot" id="s2-shot" src="assets/img/dashboard.png" alt="dashboard" /></div>
+        </div>
+        <div class="head-pill" id="s2-head">The whole fleet, at a glance</div>
+        <div class="callout c-green" id="s2-c1" style="left:250px;top:300px"><span class="n" id="s2-auto">0%</span><span class="l">unassisted</span></div>
+        <div class="callout c-blue" id="s2-c2" style="right:250px;top:360px"><span class="n">0</span><span class="l">waiting on you</span></div>
+        <div class="callout c-violet" id="s2-c3" style="left:360px;bottom:250px"><span class="n">15</span><span class="l">runs · no failures</span></div>
+      </section>
+
+      <!-- S3 INVESTIGATE -->
+      <section id="s3" class="clip" data-start="6.6" data-duration="3.2" data-track-index="0">
+        <span class="orb" style="width:560px;height:560px;background:#8A63D2;left:-120px;bottom:-120px;opacity:0.4"></span>
+        <span class="orb" style="width:520px;height:520px;background:#0A84FF;right:-120px;top:-120px;opacity:0.4"></span>
+        <div class="frame" id="s3-frame">
+          <div class="fbar"><span class="fdot" style="background:#FF5F57"></span><span class="fdot" style="background:#FEBC2E"></span><span class="fdot" style="background:#28C840"></span><span class="ftitle mono">SupOps — Investigate</span></div>
+          <div class="shotwrap"><img class="shot" id="s3-shot" src="assets/img/investigate.png" alt="investigate" /></div>
+        </div>
+        <div class="glasscard" id="s3-card">
+          <div class="lab">Tell it what's wrong</div>
+          <div class="typed mono"><span class="w">checkout</span> <span class="w">is</span> <span class="w">returning</span> <span class="w">500s</span> <span class="w">since</span> <span class="w">14:20</span></div>
+          <span class="btn" id="s3-start"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="#fff" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9z"/></svg>Start</span>
+        </div>
+      </section>
+
+      <!-- S4 CONSOLE / LIVE -->
+      <section id="s4" class="clip" data-start="9.8" data-duration="3.2" data-track-index="0">
+        <span class="orb" style="width:560px;height:560px;background:#32D74B;left:-120px;top:-120px;opacity:0.32"></span>
+        <span class="orb" style="width:560px;height:560px;background:#0A84FF;right:-120px;bottom:-120px;opacity:0.4"></span>
+        <div class="frame" id="s4-frame">
+          <div class="fbar"><span class="fdot" style="background:#FF5F57"></span><span class="fdot" style="background:#FEBC2E"></span><span class="fdot" style="background:#28C840"></span><span class="ftitle mono">SupOps — Console (live)</span></div>
+          <div class="shotwrap"><img class="shot" id="s4-shot" src="assets/img/console.png" alt="console" /></div>
+        </div>
+        <div class="cmdchip" id="s4-cmd1" style="left:300px;top:330px"><span class="p mono">$</span><span class="t mono">systemctl status checkout</span><span class="pill">read-only</span></div>
+        <div class="cmdchip" id="s4-cmd2" style="right:300px;top:470px"><span class="p mono">$</span><span class="t mono">kubectl get pods -n shop</span><span class="pill">read-only</span></div>
+        <div class="cmdchip" id="s4-cmd3" style="left:360px;bottom:300px"><span class="p mono">$</span><span class="t mono">journalctl -u checkout -n 50</span><span class="pill">read-only</span></div>
+      </section>
+
+      <!-- S5 RISK TIERS -->
+      <section id="s5" class="clip" data-start="13.0" data-duration="2.6" data-track-index="0">
+        <span class="orb" style="width:700px;height:700px;background:#0A84FF;left:40%;top:-260px;opacity:0.3"></span>
+        <div class="barwrap">
+          <div class="head">Every action, <span class="g">classified.</span></div>
+          <div class="bar">
+            <div class="seg" id="s5-s1" style="width:26%;background:#6B7280">read-only</div>
+            <div class="seg" id="s5-s2" style="width:20%;background:#5AC8E6">low</div>
+            <div class="seg" id="s5-s3" style="width:20%;background:#F5A623">medium</div>
+            <div class="seg" id="s5-s4" style="width:20%;background:#FF453A;color:#fff">high</div>
+            <div class="seg" id="s5-s5" style="width:14%;background:#7f1d1d;color:#fff">forbidden</div>
+          </div>
+          <div class="labels" id="s5-labels">
+            <div class="lg" style="color:#9aa4b2">auto</div>
+            <div class="lg" style="color:#6FD0E6">auto</div>
+            <div class="lg" style="color:#F5A623">asks you</div>
+            <div class="lg" style="color:#FF6B5E">asks you</div>
+            <div class="lg" style="color:#FF6B5E">never runs</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- S6 THE GATE -->
+      <section id="s6" class="clip" data-start="15.6" data-duration="4.4" data-track-index="0">
+        <span class="orb" style="width:640px;height:640px;background:#F5A623;left:-160px;top:-160px;opacity:0.28"></span>
+        <span class="orb" id="s6-glow" style="width:600px;height:600px;background:#32D74B;right:-160px;bottom:-160px;opacity:0"></span>
+        <div class="card">
+          <div class="lab">Proposed action · prod</div>
+          <div class="cmdline mono"><span class="k">systemctl</span> restart checkout</div>
+          <div class="badges">
+            <span class="badge pending" id="s6-pending">▲ RISK: HIGH · waiting for approval</span>
+            <span class="badge done" id="s6-done">✓ approved · ran</span>
+          </div>
+          <div class="actions">
+            <span class="btn approve" id="s6-approve">Approve &amp; run</span>
+            <span class="btn reject">Reject</span>
+          </div>
+          <div class="cursor" id="s6-cursor"><svg viewBox="0 0 24 24" fill="#fff" stroke="#0A84FF" stroke-width="1.5"><path d="M4 2l7 18 2.5-7L21 10z"/></svg></div>
+        </div>
+      </section>
+
+      <!-- S7 OUTRO -->
+      <section id="s7" class="clip" data-start="20.0" data-duration="3.2" data-track-index="0">
+        <span class="orb" id="s7-o1" style="width:680px;height:680px;background:#0A84FF;left:20%;top:-200px"></span>
+        <span class="orb" id="s7-o2" style="width:560px;height:560px;background:#32D74B;right:10%;bottom:-200px;opacity:0.4"></span>
+        <div class="center">
+          <img class="logo" id="s7-logo" src="assets/img/logo.png" alt="SupOps" />
+          <div class="tag">Give it root. <span class="b">Keep control.</span></div>
+          <div class="small">self-hosted · open source</div>
+          <div class="url mono">github.com/Ayyush-Maheshwari/SupOps</div>
+        </div>
+      </section>
+
+      <audio id="bgm" data-start="0" data-volume="0.5" src="assets/music/track.mp3"></audio>
+    </div>
+
+    <script>
+      const tl = gsap.timeline({ paused: true });
+      const R = (el, from, to, at) => tl.fromTo(el, from, to, at);
+
+      /* gentle colorful orb drift (finite) used across scenes */
+      gsap.utils.toArray(".orb").forEach((o, i) => {
+        tl.fromTo(o, { scale: 0.85 }, { scale: 1.12, duration: 3.2, ease: "sine.inOut", repeat: 6, yoyo: true }, 0);
+      });
+
+      // S1 (0-2.8)
+      R("#s1-logo", { opacity: 0, scale: 1.25, y: -10 }, { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: "back.out(1.7)" }, 0.1);
+      R("#s1 .huge", { opacity: 0, y: 26 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 0.55);
+      R("#s1 .sub", { opacity: 0, y: 16 }, { opacity: 1, y: 0, duration: 0.45 }, 0.95);
+      tl.to("#s1 .center", { opacity: 0, duration: 0.3 }, 2.5);
+
+      // S2 dashboard (2.8-6.6) — Ken Burns + callouts + count-up
+      R("#s2-frame", { opacity: 0, scale: 0.92, y: 30 }, { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: "power3.out" }, 2.85);
+      R("#s2-shot", { y: 0, scale: 1.06 }, { y: -60, scale: 1.12, duration: 3.6, ease: "sine.inOut" }, 2.9);
+      R("#s2-head", { opacity: 0, y: -14 }, { opacity: 1, y: 0, duration: 0.4 }, 3.15);
+      const c70 = { v: 0 };
+      tl.to(c70, { v: 70, duration: 1.0, ease: "power1.out", onUpdate: () => { const e = document.getElementById('s2-auto'); if (e) e.textContent = Math.round(c70.v) + '%'; } }, 3.5);
+      R("#s2-c1", { opacity: 0, scale: 0.8, y: 16 }, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: "back.out(1.8)" }, 3.5);
+      R("#s2-c2", { opacity: 0, scale: 0.8, y: 16 }, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: "back.out(1.8)" }, 3.9);
+      R("#s2-c3", { opacity: 0, scale: 0.8, y: 16 }, { opacity: 1, scale: 1, y: 0, duration: 0.4, ease: "back.out(1.8)" }, 4.3);
+      tl.to("#s2 .frame, #s2 .callout, #s2 .head-pill", { opacity: 0, duration: 0.3 }, 6.3);
+
+      // S3 investigate (6.6-9.8)
+      R("#s3-frame", { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" }, 6.65);
+      R("#s3-shot", { y: -30, scale: 1.1 }, { y: 0, scale: 1.04, duration: 3.0, ease: "sine.inOut" }, 6.7);
+      R("#s3-card", { opacity: 0, y: 34, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.5, ease: "back.out(1.4)" }, 7.0);
+      R("#s3 .typed .w", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.24, stagger: 0.13, ease: "power2.out" }, 7.4);
+      R("#s3-start", { scale: 0.85 }, { scale: 1, duration: 0.4, ease: "back.out(2.2)" }, 8.7);
+      tl.to("#s3 .frame, #s3 .glasscard", { opacity: 0, duration: 0.3 }, 9.5);
+
+      // S4 console live (9.8-13.0)
+      R("#s4-frame", { opacity: 0, scale: 0.92 }, { opacity: 1, scale: 1, duration: 0.55, ease: "power3.out" }, 9.85);
+      R("#s4-shot", { y: -20, scale: 1.05 }, { y: -80, scale: 1.12, duration: 3.0, ease: "sine.inOut" }, 9.9);
+      R("#s4-cmd1", { opacity: 0, x: -30, scale: 0.9 }, { opacity: 1, x: 0, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, 10.3);
+      R("#s4-cmd2", { opacity: 0, x: 30, scale: 0.9 }, { opacity: 1, x: 0, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, 10.8);
+      R("#s4-cmd3", { opacity: 0, x: -30, scale: 0.9 }, { opacity: 1, x: 0, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, 11.3);
+      tl.to("#s4 .frame, #s4 .cmdchip", { opacity: 0, duration: 0.3 }, 12.7);
+
+      // S5 risk bar (13.0-15.6)
+      R("#s5 .head", { opacity: 0, y: 20 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 13.05);
+      gsap.set(["#s5-s1","#s5-s2","#s5-s3","#s5-s4","#s5-s5"], { scaleX: 0 });
+      tl.to("#s5-s1", { scaleX: 1, duration: 0.3, ease: "power2.out" }, 13.3);
+      tl.to("#s5-s2", { scaleX: 1, duration: 0.3, ease: "power2.out" }, 13.5);
+      tl.to("#s5-s3", { scaleX: 1, duration: 0.3, ease: "power2.out" }, 13.7);
+      tl.to("#s5-s4", { scaleX: 1, duration: 0.3, ease: "power2.out" }, 13.9);
+      tl.to("#s5-s5", { scaleX: 1, duration: 0.3, ease: "power2.out" }, 14.1);
+      R("#s5 .lg", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.35, stagger: 0.1 }, 14.3);
+      tl.to("#s5 .barwrap", { opacity: 0, duration: 0.3 }, 15.3);
+
+      // S6 gate (15.6-20.0)
+      gsap.set("#s6-done", { opacity: 0 });
+      gsap.set("#s6-cursor", { x: 250, y: 50, opacity: 0 });
+      R("#s6 .card", { opacity: 0, y: 40, scale: 0.96 }, { opacity: 1, y: 0, scale: 1, duration: 0.55, ease: "power3.out" }, 15.7);
+      R("#s6 .cmdline", { opacity: 0, y: 12 }, { opacity: 1, y: 0, duration: 0.4 }, 16.1);
+      R("#s6-pending", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.4, ease: "back.out(1.6)" }, 16.5);
+      tl.to("#s6-pending", { scale: 1.05, duration: 0.5, ease: "sine.inOut", repeat: 3, yoyo: true }, 16.9);
+      R("#s6 .actions", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 16.9);
+      tl.to("#s6-cursor", { opacity: 1, duration: 0.25 }, 17.4);
+      tl.to("#s6-cursor", { x: -240, y: 168, duration: 0.95, ease: "power2.inOut" }, 17.5);
+      tl.to("#s6-approve", { scale: 0.93, duration: 0.12 }, 18.5);
+      tl.to("#s6-approve", { scale: 1, duration: 0.18, ease: "power2.out" }, 18.62);
+      tl.to("#s6-pending", { opacity: 0, duration: 0.22 }, 18.62);
+      R("#s6-done", { opacity: 0, scale: 0.94 }, { opacity: 1, scale: 1, duration: 0.42, ease: "back.out(1.8)" }, 18.72);
+      tl.to("#s6-glow", { opacity: 0.4, duration: 0.5 }, 18.72);
+      tl.to("#s6-cursor", { opacity: 0, duration: 0.3 }, 19.2);
+      tl.to("#s6 .card", { opacity: 0, duration: 0.32 }, 19.65);
+
+      // S7 outro (20.0-23.2)
+      R("#s7-logo", { opacity: 0, scale: 1.2, y: -8 }, { opacity: 1, scale: 1, y: 0, duration: 0.6, ease: "back.out(1.7)" }, 20.1);
+      R("#s7 .tag", { opacity: 0, y: 18 }, { opacity: 1, y: 0, duration: 0.5, ease: "power3.out" }, 20.6);
+      R("#s7 .small", { opacity: 0 }, { opacity: 1, duration: 0.4 }, 21.1);
+      R("#s7 .url", { opacity: 0, y: 10 }, { opacity: 1, y: 0, duration: 0.4 }, 21.4);
+
+      window.__timelines["main"] = tl;
+      tl.seek(0);
+    </script>
+  </body>
+</html>

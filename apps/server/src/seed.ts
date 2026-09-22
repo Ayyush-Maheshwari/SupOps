@@ -8,12 +8,23 @@ import {
 } from '@supops/db';
 import { BUILTIN_TOOL_KEYS, CONSOLE_TOOL_KEYS } from '@supops/core';
 import { db } from './context.ts';
-import { hashPassword } from './auth.ts';
+import { config } from './config.ts';
+import { emailDomainAllowed, hashPassword } from './auth.ts';
 
 const ADMIN_EMAIL = process.env.SEED_ADMIN_EMAIL ?? 'admin@supops.local';
 const ADMIN_PASSWORD = process.env.SEED_ADMIN_PASSWORD ?? 'supops';
 
 function seed() {
+  // The bootstrap owner is created regardless of AUTH_ALLOWED_EMAIL_DOMAIN (you need a
+  // way in), but flag when it is off-domain so operators set SEED_ADMIN_EMAIL properly.
+  if (config.authAllowedDomains.length && !emailDomainAllowed(ADMIN_EMAIL)) {
+    console.warn(
+      `  ! Seed admin ${ADMIN_EMAIL} is not on the allowed domain(s) ` +
+        `${config.authAllowedDomains.map((d) => '@' + d).join(', ')}. It is a local break-glass ` +
+        `account; set SEED_ADMIN_EMAIL to an org address for the owner.`,
+    );
+  }
+
   let admin = db.select().from(users).where(eq(users.email, ADMIN_EMAIL)).get();
   if (!admin) {
     admin = db

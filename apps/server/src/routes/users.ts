@@ -3,7 +3,8 @@ import { desc, eq, ne } from 'drizzle-orm';
 import { z } from 'zod';
 import { users } from '@supops/db';
 import { db } from '../context.ts';
-import { ADMIN_ROLES, hashPassword, requireRole } from '../auth.ts';
+import { config } from '../config.ts';
+import { ADMIN_ROLES, emailDomainAllowed, hashPassword, requireRole } from '../auth.ts';
 
 /**
  * Account management, admin only.
@@ -45,6 +46,12 @@ userRoutes.post('/', (req, res) => {
     return;
   }
   const email = parsed.data.email.toLowerCase();
+  if (!emailDomainAllowed(email)) {
+    res.status(400).json({
+      error: `Accounts must use an email @${config.authAllowedDomains.join(' or @')}.`,
+    });
+    return;
+  }
   if (db.select().from(users).where(eq(users.email, email)).get()) {
     res.status(409).json({ error: 'A user with that email already exists.' });
     return;

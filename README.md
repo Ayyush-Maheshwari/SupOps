@@ -77,6 +77,10 @@ Then open **http://localhost:3001** and:
 > 💾 Your data lives in the `supops-data` Docker volume, so `docker compose down && docker compose up`
 > keeps everything. To wipe it and start fresh: `docker compose down -v`.
 
+> 🏢 **Internal / org-only deployment:** set `AUTH_ALLOWED_EMAIL_DOMAIN=yourcompany.com` (env or
+> `docker-compose.yml`) to require every new account to use your domain. Leave it empty (the default)
+> and there's no restriction — cloners are unaffected. Enforced at account creation, not at login.
+
 ---
 
 ## 🧭 How you actually use it
