@@ -41,8 +41,11 @@ COPY --from=builder /app/apps/server ./apps/server
 COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
 COPY docker/entrypoint.sh ./docker/entrypoint.sh
-RUN chmod +x ./docker/entrypoint.sh
+# Strip any CRLF (a Windows checkout can rewrite the script) and make it executable,
+# so the shebang exec never fails with "no such file or directory".
+RUN sed -i 's/\r$//' ./docker/entrypoint.sh && chmod +x ./docker/entrypoint.sh
 
 EXPOSE 3001
 VOLUME ["/app/data"]
-ENTRYPOINT ["./docker/entrypoint.sh"]
+# Invoke via /bin/sh explicitly rather than relying on the shebang, for robustness.
+ENTRYPOINT ["/bin/sh", "/app/docker/entrypoint.sh"]

@@ -1,0 +1,5 @@
+# Shell scripts must stay LF even on Windows checkouts (core.autocrlf=true),
+# otherwise the Docker container fails with: exec ./docker/entrypoint.sh: no such file or directory
+*.sh text eol=lf
+docker/entrypoint.sh text eol=lf
+Dockerfile text eol=lf
