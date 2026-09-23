@@ -1,0 +1,105 @@
+# SupOps on k3s — namespace "supops", single replica (SQLite is single-writer).
+# Apply after building/importing the image and (recommended) creating the supops-env secret.
+#   kubectl apply -f k8s/supops.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: supops
+---
+# Persistent storage for the SQLite DB + generated secrets (/app/data).
+# k3s ships the "local-path" storage class by default (data lives on the node's disk).
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: supops-data
+  namespace: supops
+spec:
+  accessModes: ["ReadWriteOnce"]
+  storageClassName: local-path
+  resources:
+    requests:
+      storage: 5Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: supops
+  namespace: supops
+  labels: { app: supops }
+spec:
+  replicas: 1                 # MUST stay 1 — SQLite has a single writer.
+  strategy:
+    type: Recreate           # never run two pods on the RWO volume at once.
+  selector:
+    matchLabels: { app: supops }
+  template:
+    metadata:
+      labels: { app: supops }
+    spec:
+      containers:
+        - name: supops
+          image: supops:local
+          imagePullPolicy: IfNotPresent   # image is imported into the node, not pulled.
+          ports:
+            - containerPort: 3001
+          # Optional env (SUPOPS_MASTER_KEY, JWT_SECRET, AUTH_ALLOWED_EMAIL_DOMAIN,
+          # SEED_ADMIN_*). If the secret is absent, the entrypoint auto-generates the
+          # master key + JWT into the volume on first boot.
+          envFrom:
+            - secretRef:
+                name: supops-env
+                optional: true
+          volumeMounts:
+            - name: data
+              mountPath: /app/data
+          readinessProbe:
+            httpGet: { path: /api/health, port: 3001 }
+            initialDelaySeconds: 10
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /api/health, port: 3001 }
+            initialDelaySeconds: 30
+            periodSeconds: 20
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits: { cpu: "1", memory: "1Gi" }
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: supops-data
+---
+# Reachable on the LAN at http://<k3master-ip>:30300
+apiVersion: v1
+kind: Service
+metadata:
+  name: supops
+  namespace: supops
+  labels: { app: supops }
+spec:
+  type: NodePort
+  selector: { app: supops }
+  ports:
+    - name: http
+      port: 80
+      targetPort: 3001
+      nodePort: 30300
+---
+# OPTIONAL — Traefik ingress (k3s bundles Traefik). Uncomment and set a host that
+# resolves to the node, then reach http://supops.k3master.local
+# apiVersion: networking.k8s.io/v1
+# kind: Ingress
+# metadata:
+#   name: supops
+#   namespace: supops
+# spec:
+#   rules:
+#     - host: supops.k3master.local
+#       http:
+#         paths:
+#           - path: /
+#             pathType: Prefix
+#             backend:
+#               service:
+#                 name: supops
+#                 port:
+#                   number: 80
