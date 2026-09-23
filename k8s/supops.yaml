@@ -42,6 +42,12 @@ spec:
       # matching toleration.
       nodeSelector:
         kubernetes.io/hostname: k3s-master
+      # The control-plane node is tainted NoSchedule; tolerate it so the pod can land
+      # there. nodeSelector already constrains placement to k3s-master, so tolerating
+      # any NoSchedule taint here is safe.
+      tolerations:
+        - operator: Exists
+          effect: NoSchedule
       containers:
         - name: supops
           image: supops:local
