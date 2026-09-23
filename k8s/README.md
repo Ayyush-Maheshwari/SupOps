@@ -92,6 +92,18 @@ kubectl -n supops patch deploy supops --type=merge \
 ```
 (If your master carries a NoSchedule taint, also add a matching `tolerations` entry.)
 
+## Troubleshooting: "didn't match PersistentVolume's node affinity"
+`local-path` binds a volume to the node where the pod first scheduled. If an early pod
+landed on a worker (e.g. before the `nodeSelector` was added), the PV is stuck to that
+node and won't match once the pod is pinned to the master. With no data yet, delete and
+re-provision on the master:
+```bash
+kubectl -n supops scale deploy supops --replicas=0
+kubectl -n supops delete pvc supops-data
+kubectl apply -f k8s/supops.yaml            # recreates the PVC; provisions on the pinned node
+kubectl -n supops rollout status deploy/supops
+```
+
 ## Notes
 - **Do not scale replicas > 1** — SQLite is single-writer; the manifest uses `Recreate` so
   two pods never mount the volume at once.
