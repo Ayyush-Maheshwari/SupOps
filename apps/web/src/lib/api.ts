@@ -37,9 +37,16 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
   });
 
   if (res.status === 401) {
+    const body = await res.json().catch(() => ({}));
+    // A rejected sign-in is not an expired session. Surfacing "Session expired" for a
+    // wrong email/password hid the real reason, so the login call reports the server's
+    // own message and does not clear/redirect (there is no session to lose yet).
+    if (path.startsWith('/auth/login')) {
+      throw new ApiError(body.error ?? 'Incorrect email or password', 401);
+    }
     setToken(null);
     if (!location.pathname.startsWith('/login')) location.href = '/login';
-    throw new ApiError('Session expired', 401);
+    throw new ApiError(body.error ?? 'Session expired; sign in again', 401);
   }
   if (!res.ok) {
     const body = await res.json().catch(() => ({}));
