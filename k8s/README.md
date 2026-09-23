@@ -77,6 +77,21 @@ docker build -t supops:local . && docker save supops:local | sudo k3s ctr images
 kubectl -n supops rollout restart deploy/supops
 ```
 
+## Pinning to the node that has the image
+Because the image is imported into one node (no registry), the pod must run there or you
+get `ImagePullBackOff` on other nodes. The manifest pins it with:
+```yaml
+nodeSelector:
+  kubernetes.io/hostname: k3s-master
+```
+Match that to your control-plane node name (`kubectl get nodes`). To apply it to an
+already-running deployment without re-applying everything:
+```bash
+kubectl -n supops patch deploy supops --type=merge \
+  -p '{"spec":{"template":{"spec":{"nodeSelector":{"kubernetes.io/hostname":"k3s-master"}}}}}'
+```
+(If your master carries a NoSchedule taint, also add a matching `tolerations` entry.)
+
 ## Notes
 - **Do not scale replicas > 1** — SQLite is single-writer; the manifest uses `Recreate` so
   two pods never mount the volume at once.

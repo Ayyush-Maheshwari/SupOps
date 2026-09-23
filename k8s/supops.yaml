@@ -36,6 +36,12 @@ spec:
     metadata:
       labels: { app: supops }
     spec:
+      # Pin to the node that has the imported image (no registry, so it's only where
+      # you ran `k3s ctr images import`). Match this to your control-plane node's name
+      # from `kubectl get nodes` (commonly k3s-master). If that node is tainted, add a
+      # matching toleration.
+      nodeSelector:
+        kubernetes.io/hostname: k3s-master
       containers:
         - name: supops
           image: supops:local
