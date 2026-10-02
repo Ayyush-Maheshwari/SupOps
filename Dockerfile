@@ -50,6 +50,8 @@ COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/apps/server ./apps/server
 COPY --from=builder /app/apps/web/package.json ./apps/web/package.json
 COPY --from=builder /app/apps/web/dist ./apps/web/dist
+# The licence and attribution travel with every copy of the image.
+COPY --from=builder /app/LICENSE /app/NOTICE ./
 COPY docker/entrypoint.sh ./docker/entrypoint.sh
 # Strip any CRLF (a Windows checkout can rewrite the script) and make it executable,
 # so the shebang exec never fails with "no such file or directory".

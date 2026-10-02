@@ -1,10 +1,10 @@
 import { useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Plus, ShieldCheck, UserPlus } from 'lucide-react';
+import { AtSign, ChevronDown, Plus, ShieldCheck, UserPlus } from 'lucide-react';
 import { api, del, patch, post } from '../lib/api';
 import { PageHeader } from '../components/Layout';
-import { Empty, Field, Panel, Spinner } from '../components/ui';
+import { CommandBlock, Empty, Field, Panel, Spinner } from '../components/ui';
 import type { AdminUser } from '../lib/types';
 
 const ROLES = ['owner', 'admin', 'member'] as const;
@@ -87,6 +87,8 @@ export function Users() {
           </Panel>
         )}
 
+        {authCfg.data && <DomainRestriction domains={domains} />}
+
         <Panel>
           {users.isLoading ? (
             <div className="grid place-items-center py-12 text-muted"><Spinner /></div>
@@ -152,5 +154,56 @@ export function Users() {
         )}
       </div>
     </>
+  );
+}
+
+/**
+ * Whether new accounts are limited to the company's email domain, and how to turn it
+ * on when they are not. The setting lives in the server's environment, not in the app,
+ * so this explains where to put it rather than offering a toggle.
+ */
+function DomainRestriction({ domains }: { domains: string[] }) {
+  if (domains.length) {
+    return (
+      <div className="flex items-start gap-2.5 rounded-inner border border-green/30 bg-green/5 px-4 py-3 text-xs">
+        <ShieldCheck size={15} className="mt-px shrink-0 text-green" aria-hidden />
+        <p className="text-ink">
+          New accounts must use {domains.map((d) => `@${d}`).join(' or ')}.{' '}
+          <span className="text-muted">Existing accounts keep signing in as before.</span>
+        </p>
+      </div>
+    );
+  }
+  return (
+    <details className="group rounded-inner border border-hairline bg-tile-2/40 text-xs">
+      <summary className="flex cursor-pointer list-none items-center gap-2.5 px-4 py-3 [&::-webkit-details-marker]:hidden">
+        <AtSign size={15} className="shrink-0 text-muted" aria-hidden />
+        <span className="text-muted">Accounts can be created with any email address.</span>
+        <span className="font-medium text-blue-text">Limit to your company's domain</span>
+        <ChevronDown size={14} className="ml-auto shrink-0 text-muted transition-transform group-open:rotate-180" aria-hidden />
+      </summary>
+      <div className="space-y-3 border-t border-hairline px-4 pb-4 pt-3 text-muted">
+        <p>
+          Set <code className="font-mono text-ink">AUTH_ALLOWED_EMAIL_DOMAIN</code> where SupOps runs, then restart it.
+          Separate several domains with commas.
+        </p>
+        <div className="space-y-1.5">
+          <p className="font-medium text-ink">Docker Compose</p>
+          <p>
+            Create <code className="font-mono text-ink">docker-compose.override.yml</code> next to{' '}
+            <code className="font-mono text-ink">docker-compose.yml</code>, then run{' '}
+            <code className="font-mono text-ink">docker compose up -d</code>:
+          </p>
+          <CommandBlock>{'services:\n  supops:\n    environment:\n      AUTH_ALLOWED_EMAIL_DOMAIN: "yourcompany.com"'}</CommandBlock>
+        </div>
+        <div className="space-y-1.5">
+          <p className="font-medium text-ink">Kubernetes</p>
+          <CommandBlock>
+            {'kubectl -n supops patch secret supops-env --type merge \\\n  -p \'{"stringData":{"AUTH_ALLOWED_EMAIL_DOMAIN":"yourcompany.com"}}\'\nkubectl -n supops rollout restart deploy/supops'}
+          </CommandBlock>
+        </div>
+        <p>It applies to accounts created afterwards; existing ones, including yours, keep working.</p>
+      </div>
+    </details>
   );
 }

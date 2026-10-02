@@ -13,3 +13,6 @@ brag-output/
 supops-brag.*
 /*.pdf
 /*.mp4
+
+# Per-machine settings (e.g. AUTH_ALLOWED_EMAIL_DOMAIN) stay out of the repo
+docker-compose.override.yml

@@ -20,7 +20,8 @@ services:
     #   SEED_ADMIN_EMAIL: "admin@supops.local"
     #   SEED_ADMIN_PASSWORD: "supops"
     #   RUN_CONCURRENCY: "1"
-    #   # Internal/org-only deployment: restrict new accounts to your domain(s)
+    #   # Org-only accounts: prefer a git-ignored docker-compose.override.yml for this
+    #   # (see "Only allow your company's email addresses" in the README)
     #   AUTH_ALLOWED_EMAIL_DOMAIN: "example.com"
     restart: unless-stopped
 

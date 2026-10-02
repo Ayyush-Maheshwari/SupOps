@@ -10,5 +10,10 @@ data
 .git
 .github
 .claude
-docs/plans
 npm-debug.log*
+docs
+brag-output
+supops-brag.*
+*.pdf
+*.mp4
+docker-compose.override.yml

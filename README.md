@@ -12,6 +12,7 @@ evidence and acts — while every risky action stops for your approval.
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-3C873A?style=flat-square&logo=node.js&logoColor=white)
 ![Model agnostic](https://img.shields.io/badge/LLM-Gemini%20%C2%B7%20Ollama%20%C2%B7%20OpenAI--compatible-8A63D2?style=flat-square)
 ![Human in the loop](https://img.shields.io/badge/risky%20actions-need%20approval-F5A623?style=flat-square)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
 </div>
 
@@ -61,9 +62,36 @@ Then open **http://localhost:3001** and:
 > 💾 Your data lives in the `supops-data` Docker volume, so `docker compose down && docker compose up`
 > keeps everything. To wipe it and start fresh: `docker compose down -v`.
 
-> 🏢 **Internal / org-only deployment:** set `AUTH_ALLOWED_EMAIL_DOMAIN=yourcompany.com` (env or
-> `docker-compose.yml`) to require every new account to use your domain. Leave it empty (the default)
-> and there's no restriction — cloners are unaffected. Enforced at account creation, not at login.
+### 🏢 Only allow your company's email addresses
+
+By default anyone can be given an account with any email address. For an internal deployment, set
+`AUTH_ALLOWED_EMAIL_DOMAIN` and new accounts must use your domain:
+
+**Docker Compose** — create `docker-compose.override.yml` next to `docker-compose.yml` (Compose
+picks it up automatically, and it is git-ignored, so `git pull` never conflicts with it):
+
+```yaml
+services:
+  supops:
+    environment:
+      AUTH_ALLOWED_EMAIL_DOMAIN: "yourcompany.com"
+```
+
+then `docker compose up -d` to restart with it (nothing is rebuilt; your data stays).
+
+**Kubernetes** — add it to the `supops-env` secret and restart the pod
+(see [k8s/README.md](k8s/README.md)):
+
+```bash
+kubectl -n supops patch secret supops-env --type merge \
+  -p '{"stringData":{"AUTH_ALLOWED_EMAIL_DOMAIN":"yourcompany.com"}}'
+kubectl -n supops rollout restart deploy/supops
+```
+
+- Several domains: separate them with commas (`yourcompany.com,partner.com`).
+- It applies when an account is **created**. Existing accounts, including the first admin, keep
+  signing in, so you can never lock yourself out.
+- **Users** in the app shows whether the restriction is on and which domains are allowed.
 
 ### 🌐 Plain HTTP is fine
 
@@ -238,10 +266,29 @@ what may run unattended — extend it alongside the rules.
 
 ## 📦 What's built
 
-✅ Durable agent loop with crash recovery · five-stage risk engine · approval suspend/resume · SSH
-execution (with jump-host support) · encrypted credentials · live run streaming · health scans
-(quick & deep, scheduled or manual) · Kubernetes cluster targets · multiple user accounts with approval attribution · one-command
-Docker image · shareable PDF/Markdown run reports · the dark NOC UI.
+✅ Durable agent loop with crash recovery · five-stage risk engine · approval suspend/resume with
+roles and a second-approver option · configurable autonomy per project and agent · SSH execution
+(with jump-host support) · Kubernetes cluster targets · Prometheus, Grafana, Loki, Elasticsearch
+and Alertmanager connections · encrypted credentials · live run streaming · health scans (quick &
+deep, scheduled or manual) · knowledge base of runbooks, notes and facts · feedback and corrections
+on agent replies · automatic run-history clean-up · multiple user accounts · one-command Docker
+image · shareable PDF/Markdown run reports · installable web app.
 
-🔜 Docker/HTTP executors as first-class targets · alert webhooks beyond Slack · declarative
-custom tools · a knowledge base.
+🔜 Cloud accounts (AWS, GCP, Azure) through a sandboxed toolbox · GitHub/GitLab and CI/CD ·
+multi-step scripts with per-line risk checks · rules learned from past denials.
+
+---
+
+## 🤝 Contributing
+
+Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report
+security problems privately, as described in [SECURITY.md](SECURITY.md), and follow the
+[code of conduct](CODE_OF_CONDUCT.md).
+
+## 📄 License and credits
+
+SupOps is created by **[Ayyush Maheshwari](https://github.com/Ayyush-Maheshwari)** and released
+under the [Apache License 2.0](LICENSE): you may use, change and share it, including commercially.
+If you redistribute it or a version of it, keep the [NOTICE](NOTICE) file, which credits the
+original project. The SupOps name and logo are not covered by the licence, so a modified version
+needs its own name; "based on SupOps" is welcome.
