@@ -1,0 +1,15 @@
+node_modules/
+dist/
+*.local
+.env
+data/
+*.db
+*.db-wal
+*.db-shm
+.DS_Store
+
+# Promo and personal material kept in the project folder, never in the repo
+brag-output/
+supops-brag.*
+/*.pdf
+/*.mp4

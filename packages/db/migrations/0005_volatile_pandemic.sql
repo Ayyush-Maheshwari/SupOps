@@ -1,0 +1,1 @@
+ALTER TABLE `targets` ADD `become_credential_id` text REFERENCES credentials(id);

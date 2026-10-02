@@ -1,0 +1,1 @@
+ALTER TABLE `runs` ADD `interactive` integer DEFAULT false NOT NULL;

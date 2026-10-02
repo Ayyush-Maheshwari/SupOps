@@ -1,0 +1,25 @@
+{
+  "name": "SupOps",
+  "short_name": "SupOps",
+  "description": "Self-hosted AI operations: investigate, health-check and fix your machines with a human in the loop.",
+  "id": "/",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "display_override": ["window-controls-overlay", "standalone"],
+  "orientation": "any",
+  "background_color": "#08090F",
+  "theme_color": "#08090F",
+  "categories": ["developer", "productivity", "utilities"],
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "/icon-maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Investigate", "url": "/investigate", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Approvals", "url": "/approvals", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Health", "url": "/health", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] },
+    { "name": "Runs", "url": "/runs", "icons": [{ "src": "/icon-192.png", "sizes": "192x192" }] }
+  ]
+}

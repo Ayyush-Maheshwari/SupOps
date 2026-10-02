@@ -1,0 +1,1 @@
+ALTER TABLE `runs` ADD `pinned` integer DEFAULT false NOT NULL;

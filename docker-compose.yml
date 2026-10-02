@@ -1,0 +1,28 @@
+# Run the whole app in one container: docker compose up --build
+# Then open http://localhost:3001 and sign in with the seeded admin
+# (admin@supops.local / supops), and paste an LLM key in Settings.
+services:
+  supops:
+    build: .
+    image: supops:local
+    ports:
+      - "3001:3001"
+    # A named volume keeps state (SQLite + generated secrets) on the tester's machine
+    # and starts empty on a fresh host -- no local data is ever baked into the image.
+    volumes:
+      - supops-data:/app/data
+    # Everything is optional — the LLM key is normally entered in the UI
+    # (Settings > Provider) and persists to the database. To preset values instead,
+    # uncomment this block AND its keys (an empty `environment:` is invalid YAML):
+    # environment:
+    #   LLM_API_KEY: ""
+    #   LLM_MODEL: "gemini-2.5-flash"
+    #   SEED_ADMIN_EMAIL: "admin@supops.local"
+    #   SEED_ADMIN_PASSWORD: "supops"
+    #   RUN_CONCURRENCY: "1"
+    #   # Internal/org-only deployment: restrict new accounts to your domain(s)
+    #   AUTH_ALLOWED_EMAIL_DOMAIN: "example.com"
+    restart: unless-stopped
+
+volumes:
+  supops-data:
