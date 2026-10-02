@@ -18,6 +18,14 @@ evidence and acts — while every risky action stops for your approval.
 
 ---
 
+## 👀 What it looks like
+
+**Dashboard — everything at a glance: what's running, what's healthy, what's waiting on you.**
+
+![SupOps dashboard](docs/images/dashboard.png)
+
+---
+
 ## 🤔 What is SupOps?
 
 Most "AI for ops" tools stop at a paragraph of advice. SupOps goes one step further: it **runs
