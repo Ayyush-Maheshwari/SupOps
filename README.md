@@ -295,7 +295,7 @@ security problems privately, as described in [SECURITY.md](SECURITY.md), and fol
 
 ## 📄 License and credits
 
-SupOps is created by **[Ayyush Maheshwari](https://github.com/Ayyush-Maheshwari)** and released
+SupOps is created by **[Ayush Maheshwari](https://github.com/Ayyush-Maheshwari)** and released
 under the [Apache License 2.0](LICENSE): you may use, change and share it, including commercially.
 If you redistribute it or a version of it, keep the [NOTICE](NOTICE) file, which credits the
 original project. The SupOps name and logo are not covered by the licence, so a modified version

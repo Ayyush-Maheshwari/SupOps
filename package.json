@@ -2,7 +2,7 @@
   "name": "supops",
   "private": true,
   "license": "Apache-2.0",
-  "author": "Ayyush Maheshwari (https://github.com/Ayyush-Maheshwari)",
+  "author": "Ayush Maheshwari (https://github.com/Ayyush-Maheshwari)",
   "type": "module",
   "workspaces": [
     "packages/*",
