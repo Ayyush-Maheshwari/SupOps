@@ -147,6 +147,22 @@ diagram when you ask for a flow chart or a flow is clearest. Diagrams are drawn 
 view, embedded in the PDF report, and kept as Mermaid in the Markdown export, which GitHub
 and most wikis render. Screenshots you attached are included in the PDF as evidence.
 
+**No access? Use Advisory mode.** Some environments will never give SupOps SSH, IPs or
+credentials. Choose **Advisory** in Investigate. When a project has no targets it is the
+only mode, and Console is advisory too. The agent then has no tools at all. It works from
+your description, screenshots and the project's approved runbooks and facts in
+**Knowledge**. It ranks the likely causes, gives you read-only checks, the fix, how to
+verify and roll it back, and how to prevent it. You run the commands yourself. Each
+suggested command is rated by the same risk engine, for example *only looks*, *changes
+something* or *never run this*. Paste the output back as a follow-up and it narrows the
+diagnosis.
+
+**Talk instead of typing.** The 🎤 button in Investigate, Console and run follow-ups
+dictates into the message box. Check the text, then send. It uses the browser's speech
+recognition, which works in Chrome, Edge and Safari but not Firefox. Browsers only allow
+the microphone over HTTPS or on `localhost`. Chrome and Edge send the audio to Google or
+Microsoft to turn it into text, so leave it unused if that is not acceptable for you.
+
 ---
 
 ## ☸️ Connecting a Kubernetes cluster (no VM needed)

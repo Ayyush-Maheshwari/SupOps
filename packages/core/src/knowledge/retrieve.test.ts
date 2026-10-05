@@ -42,6 +42,15 @@ test('only approved, in-scope documents ever reach a run', () => {
   assert.deepEqual(ctx.used.map((u) => u.via).sort(), ['matched', 'pinned']);
 });
 
+test('advisory runs have no targets, so every approved document is in scope', () => {
+  const { db, projectId, add } = setup();
+  add({ slug: 'dev-only', title: 'Dev box', body: 'postgres in dev uses port 5433', scope: { envs: ['dev'] }, pinned: true });
+  add({ slug: 'draft', title: 'Draft note', body: 'postgres port notes', status: 'draft', pinned: true });
+  const ctx = buildKnowledgeContext(db, { projectId, scope: 'all', task: 'postgres port' });
+  assert.match(ctx.block, /Dev box/);
+  assert.doesNotMatch(ctx.block, /Draft note/, 'drafts still never reach a run');
+});
+
 test('a chosen runbook is included in full and recorded', () => {
   const { db, projectId, add } = setup();
   const rb = add({ slug: 'disk-full', title: 'Disk full on web', body: '1. df -h\n2. rotate logs\n3. verify', kind: 'runbook' });

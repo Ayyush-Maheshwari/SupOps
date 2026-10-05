@@ -21,6 +21,7 @@ import {
   canDecide,
   mergePolicy,
   globalRolesMeeting,
+  rateSuggestedCommand,
   requiredRole,
   buildReportMarkdown,
   buildRunDigest,
@@ -168,6 +169,8 @@ const startBody = z.object({
   images: imagesInput,
   /** An approved runbook to follow. */
   runbookId: z.string().optional(),
+  /** Advise only: no targets, no tools (see StartRunInput.advisory). */
+  advisory: z.boolean().optional(),
 });
 
 runRoutes.post('/', (req, res) => {
@@ -176,7 +179,7 @@ runRoutes.post('/', (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid run' });
     return;
   }
-  const { projectId, agentId, task, targetIds, interactive, images, runbookId } = parsed.data;
+  const { projectId, agentId, task, targetIds, interactive, images, runbookId, advisory } = parsed.data;
   const decoded = decodeImages(images);
   if (!decoded.ok) {
     res.status(400).json({ error: decoded.error });
@@ -193,12 +196,28 @@ runRoutes.post('/', (req, res) => {
     startedBy: req.user?.id ?? null,
     images: decoded.decoded,
     runbookId: runbookId ?? null,
+    advisory: advisory ?? false,
   });
   if (!result.ok) {
     res.status(result.code).json({ error: result.error });
     return;
   }
   res.status(201).json(result.run);
+});
+
+const rateBody = z.object({ commands: z.array(z.string().max(2000)).max(100) });
+
+/**
+ * Rate the commands an advisory run suggested, so the person about to run them by
+ * hand sees the same verdict the engine would give a live run. Nothing is executed.
+ */
+runRoutes.post('/rate-commands', (req, res) => {
+  const parsed = rateBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: 'commands must be a list of up to 100 lines' });
+    return;
+  }
+  res.json(parsed.data.commands.map((c) => rateSuggestedCommand(c)));
 });
 
 /** Everything the run detail view needs, in one round trip. */

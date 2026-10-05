@@ -5,13 +5,16 @@ import { ChevronRight, Paperclip, X } from 'lucide-react';
 import type { ImageAttachments } from '../lib/images';
 import { MAX_IMAGES } from '../lib/images';
 import { Spinner } from './ui';
+import { MicButton } from './MicButton';
+import { useDictation } from '../lib/useDictation';
 
 /**
  * The message box: one slim line -- attach, text, send -- in a single bordered
  * surface, so the controls read as one thing. Attached images appear above the line
  * only when there are some. The textarea grows with its content up to a cap.
  *
- * Enter sends, Shift+Enter is a newline, and paste/drop attach images.
+ * Enter sends, Shift+Enter is a newline, and paste/drop attach images. The mic
+ * dictates into the box; sending stops it.
  */
 export function Composer({
   value,
@@ -47,6 +50,11 @@ export function Composer({
   sendIcon?: ReactNode;
 }) {
   const ref = useRef<HTMLTextAreaElement>(null);
+  const dictation = useDictation(value, onChange);
+  const submit = () => {
+    dictation.cancel();
+    onSubmit();
+  };
 
   // Grow with the text: reset to one line, then fit the content (capped by max-h).
   useEffect(() => {
@@ -62,7 +70,7 @@ export function Composer({
   const onKeyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
       e.preventDefault();
-      if (canSend) onSubmit();
+      if (canSend) submit();
     }
   };
 
@@ -126,16 +134,18 @@ export function Composer({
             onChange={(e) => onChange(e.target.value)}
             onKeyDown={onKeyDown}
             onPaste={att.onPaste}
-            placeholder={att.dragging ? 'Drop to attach' : locked && lockedHint ? lockedHint : placeholder}
+            placeholder={att.dragging ? 'Drop to attach' : dictation.listening ? 'Listening…' : locked && lockedHint ? lockedHint : placeholder}
             disabled={disabled}
             autoFocus={autoFocus}
             aria-label="Message"
             className="block max-h-40 min-h-[40px] min-w-0 flex-1 resize-none bg-transparent px-1 py-2.5 text-sm leading-5 text-ink placeholder:text-muted focus:outline-none"
           />
 
+          <MicButton dictation={dictation} disabled={disabled} className="mb-0.5 !h-[34px] !w-[34px]" />
+
           <button
             type="button"
-            onClick={onSubmit}
+            onClick={submit}
             disabled={!canSend}
             className="btn-primary mb-0.5 shrink-0 !min-h-[34px] !rounded-xl !px-2.5"
             title="Send (Enter)"
@@ -147,6 +157,7 @@ export function Composer({
       </div>
 
       {att.error && <p className="px-1 text-[11px] text-amber">{att.error}</p>}
+      {dictation.error && <p className="px-1 text-[11px] text-amber">{dictation.error}</p>}
       {error && <p className="px-1 text-[11px] text-red">{error}</p>}
       {footer && <p className="px-1 text-[11px] text-muted">{footer}</p>}
     </div>

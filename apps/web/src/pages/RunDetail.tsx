@@ -43,6 +43,7 @@ export function RunDetail() {
 
   const run = detail.data?.run;
   const isLive = run && ['running', 'queued', 'awaiting_approval', 'suspended'].includes(run.status);
+  const advisory = !!run?.policySnapshot?.advisory;
 
   // Follow the output while the run is live -- but only while the reader is already
   // at the bottom. Scrolling up to read something releases the auto-scroll (the
@@ -127,6 +128,11 @@ export function RunDetail() {
             <h1 className="truncate text-xl font-semibold text-ink">{run.title}</h1>
             <div className="mt-1 flex flex-wrap items-center gap-3 text-xs text-muted">
               <StatusPill status={run.status} />
+              {advisory && (
+                <span className="chip border-amber/30 bg-amber/10 text-amber" title="This run had no access to any system. Its commands are for you to run.">
+                  Advisory · no system access
+                </span>
+              )}
               <span>{run.model}</span>
               {shownTargets.length > 0 && (
                 <span className="inline-flex items-center gap-1">
@@ -148,7 +154,7 @@ export function RunDetail() {
           <div className="flex shrink-0 items-start gap-2">
             {/* Available on any run that has actually done something, not just on
                 success -- a failed or rejected run is often the one worth writing up. */}
-            {detail.data.toolCalls.length > 0 && <ReportActions runId={run.id} />}
+            {(detail.data.toolCalls.length > 0 || (advisory && !isLive)) && <ReportActions runId={run.id} />}
             <button
               className={clsx('btn-ghost !px-3', run.pinned && '!border-blue/50 !text-blue-text')}
               onClick={async () => {
@@ -230,7 +236,7 @@ export function RunDetail() {
             <div key={step.id} className="space-y-3">
               {m.content && (
                 <Bubble icon={<Bot size={15} />} tint="text-violet" label="Agent">
-                  <Markdown>{messageText(m.content)}</Markdown>
+                  <Markdown rateCommands={advisory}>{messageText(m.content)}</Markdown>
                   {!m.tool_calls?.length && !isLive && (
                     <FeedbackBar runId={run.id} stepId={step.id} text={messageText(m.content)} projectId={run.projectId} />
                   )}
@@ -266,7 +272,11 @@ export function RunDetail() {
               sending={followUp.isPending}
               locked={isLive}
               lockedHint={run.status === 'awaiting_approval' ? 'Waiting for a decision — you can send once it finishes' : 'The agent is working — you can send once it finishes'}
-              placeholder="Ask a follow-up, or tell it what to do next… (paste or drop a screenshot to attach it)"
+              placeholder={
+                advisory
+                  ? 'Paste the output of the checks you ran, or ask a follow-up…'
+                  : 'Ask a follow-up, or tell it what to do next… (paste or drop a screenshot to attach it)'
+              }
               error={followUp.error ? (followUp.error instanceof Error ? followUp.error.message : 'Could not send that') : null}
             />
           </div>

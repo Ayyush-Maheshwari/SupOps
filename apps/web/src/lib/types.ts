@@ -126,6 +126,8 @@ export interface Run {
   targets?: string[];
   /** Present on the list endpoint: who approved/rejected this run's gated steps. */
   approvals?: RunApprovals;
+  /** The policy frozen at start; `advisory` marks a run with no system access. */
+  policySnapshot?: { advisory?: boolean; unattended?: boolean };
 }
 
 export interface ToolCall {

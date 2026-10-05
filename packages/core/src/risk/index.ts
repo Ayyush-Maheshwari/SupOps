@@ -11,6 +11,7 @@ export * from './shell-rules.ts';
 export * from './paths.ts';
 export * from './approval.ts';
 export * from './policy.ts';
+export * from './advisory.ts';
 
 export interface AssessInput {
   def: ToolDef<never>;

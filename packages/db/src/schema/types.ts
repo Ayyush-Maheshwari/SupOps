@@ -29,6 +29,12 @@ export interface RiskPolicy {
    * the agent told why, instead of parking the run until someone notices.
    */
   unattended?: boolean;
+  /**
+   * Set only on a run's snapshot: the run has no access to any system (none was
+   * registered, or the operator chose not to give it any). It is given no tools and
+   * advises from the operator's facts and the project's knowledge instead.
+   */
+  advisory?: boolean;
 }
 
 export const DEFAULT_RISK_POLICY: RiskPolicy = {

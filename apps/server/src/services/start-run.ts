@@ -39,6 +39,12 @@ export interface StartRunInput {
   images?: Parameters<typeof saveImages>[1];
   /** An approved runbook the agent should follow. */
   runbookId?: string | null;
+  /**
+   * Advise only, with no access to any system: no targets and no tools. Also what a
+   * run becomes when the project has no targets at all, so environments that will
+   * never grant SupOps access can still investigate from runbooks and pasted facts.
+   */
+  advisory?: boolean;
 }
 
 export type StartRunResult =
@@ -80,19 +86,17 @@ export function startRun(input: StartRunInput): StartRunResult {
       };
     }
   }
-  if (targets.length === 0) {
-    return {
-      ok: false,
-      code: 400,
-      error: 'This project has no enabled targets, so the agent would have nothing to inspect.',
-    };
+  if (targets.length === 0 && targetIds?.length) {
+    return { ok: false, code: 400, error: 'None of the selected targets are available.' };
   }
+  const advisory = !!input.advisory || available.length === 0;
+  if (advisory) targets = [];
 
   // Cluster targets are just another way to reach infrastructure: an agent allowed to
   // run commands on machines (ssh_exec) may run kubectl on clusters too. Agents saved
   // before cluster targets existed get it here rather than via a data migration.
   const resolved = registry.resolve(effectiveToolKeys(agent.toolKeys ?? null));
-  const tools = bindTools(input.unattended ? resolved.filter((d) => d.key !== 'confirm_target') : resolved, targets);
+  const tools = advisory ? [] : bindTools(input.unattended ? resolved.filter((d) => d.key !== 'confirm_target') : resolved, targets);
   const targetSummaries = targets.map((t) => ({
     slug: t.slug,
     kind: t.kind,
@@ -101,12 +105,16 @@ export function startRun(input: StartRunInput): StartRunResult {
     ...(t.config.kind === 'ssh' && t.config.addresses?.length ? { addresses: t.config.addresses } : {}),
   }));
 
-  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt);
+  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt, { advisory });
 
   // The project's policy combined with this agent's override (which may raise the
   // agent up to the project ceiling, and can otherwise only tighten).
   const merged = mergePolicy(project.riskPolicy, agent.riskPolicyOverride);
-  const policySnapshot = input.unattended ? { ...merged, unattended: true } : merged;
+  const policySnapshot = {
+    ...merged,
+    ...(input.unattended ? { unattended: true } : {}),
+    ...(advisory ? { advisory: true } : {}),
+  };
 
   // Everything the agent's world consists of is frozen here. A later edit to the
   // allowlist, the policy or a target cannot retroactively change what this run was
@@ -143,7 +151,7 @@ export function startRun(input: StartRunInput): StartRunResult {
   // Approved project knowledge in scope for these targets (drafts never reach a run).
   const knowledge = buildKnowledgeContext(db, {
     projectId,
-    scope: { targetIds: targets.map((t) => t.id), kinds: [...new Set(targets.map((t) => t.kind))], envs: [...new Set(targets.map((t) => t.env))] },
+    scope: advisory ? 'all' : { targetIds: targets.map((t) => t.id), kinds: [...new Set(targets.map((t) => t.kind))], envs: [...new Set(targets.map((t) => t.env))] },
     task,
     runbookId: input.runbookId ?? null,
   });
@@ -157,6 +165,7 @@ export function startRun(input: StartRunInput): StartRunResult {
       ? 'This run is unattended: only read-only actions run, and anything that would need approval is refused.'
       : describeAutonomy(policySnapshot, input.trigger ?? 'chat'),
     knowledge: knowledge.block,
+    advisory,
   });
   const imageIds = input.images?.length ? saveImages(run.id, input.images, input.startedBy ?? null) : [];
   engine.store.appendStep(run.id, { role: 'user', content: userContent(opening, imageIds) });

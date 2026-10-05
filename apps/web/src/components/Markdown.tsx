@@ -1,7 +1,19 @@
+import { createContext, useContext, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import type { Components } from 'react-markdown';
+import { useQuery } from '@tanstack/react-query';
+import { clsx } from 'clsx';
+import { Check, Copy } from 'lucide-react';
+import type { RiskTier } from '@supops/shared';
+import { post } from '../lib/api';
+import { copyText } from '../lib/clipboard';
+import { TIER_STYLE } from '../lib/format';
 import { Diagram } from './Diagram';
+
+/** Set by advisory runs: shell blocks are commands a person will run by hand. */
+const RateCommands = createContext(false);
+const SHELL = /language-(bash|sh|shell|console|zsh)\b/;
 
 /**
  * Render agent prose as Markdown.
@@ -43,6 +55,7 @@ const components: Components = {
     // ```mermaid blocks are drawn, not printed.
     if (/language-mermaid/.test(className ?? '')) return <Diagram source={String(children).replace(/\n$/, '')} />;
     const isBlock = /language-/.test(className ?? '');
+    if (isBlock && SHELL.test(className ?? '')) return <ShellBlock text={String(children).replace(/\n$/, '')} />;
     if (isBlock) {
       return (
         <code className="block overflow-x-auto whitespace-pre rounded-lg border border-hairline bg-ground/70 px-3 py-2 font-mono text-xs leading-relaxed text-ink">
@@ -78,15 +91,83 @@ const components: Components = {
   td: ({ children }) => <td className="border border-hairline px-2 py-1.5 text-ink">{children}</td>,
 };
 
-export function Markdown({ children }: { children: string }) {
+const commandOf = (line: string) => {
+  const s = line.trim().replace(/^\$\s+/, '');
+  return s && !s.startsWith('#') ? s : null;
+};
+
+/** What each verdict means for someone about to paste the line into a terminal. */
+const VERDICT: Record<RiskTier, string> = {
+  read_only: 'only looks',
+  low: 'low risk',
+  medium: 'changes something',
+  high: 'risky change',
+  forbidden: 'never run this',
+};
+
+/**
+ * A shell block. In an advisory run each command is rated by the risk engine -- the
+ * same verdict a live run would get -- since the reader is the one who will run it.
+ */
+function ShellBlock({ text }: { text: string }) {
+  const rate = useContext(RateCommands);
+  const [copied, setCopied] = useState(false);
+  const lines = text.split('\n');
+  const commands = lines.map(commandOf).filter((c): c is string => !!c);
+  const ratings = useQuery({
+    queryKey: ['rate-commands', commands],
+    queryFn: () => post<Array<{ tier: RiskTier; reason: string }>>('/runs/rate-commands', { commands }),
+    enabled: rate && commands.length > 0,
+    staleTime: Infinity,
+  });
+  let k = 0;
+  return (
+    <div className="group/sh relative">
+      <code className="block overflow-x-auto whitespace-pre rounded-lg border border-hairline bg-ground/70 px-3 py-2 pr-9 font-mono text-xs leading-relaxed text-ink">
+        {lines.map((line, i) => {
+          const cmd = commandOf(line);
+          const r = cmd && rate ? ratings.data?.[k++] : undefined;
+          return (
+            <span key={i} className={clsx('flex items-baseline gap-3', !cmd && line.trim() && 'text-muted')}>
+              <span className="min-w-0 flex-1">{line || ' '}</span>
+              {r && (
+                <span title={r.reason} className={clsx('shrink-0 font-sans text-[10px] uppercase tracking-wide', TIER_STYLE[r.tier].text)}>
+                  {VERDICT[r.tier]}
+                </span>
+              )}
+            </span>
+          );
+        })}
+      </code>
+      <button
+        type="button"
+        onClick={async () => {
+          if (await copyText(commands.join('\n') || text)) {
+            setCopied(true);
+            setTimeout(() => setCopied(false), 1500);
+          }
+        }}
+        className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded text-muted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/sh:opacity-100"
+        title="Copy the commands"
+        aria-label="Copy the commands"
+      >
+        {copied ? <Check size={12} /> : <Copy size={12} />}
+      </button>
+    </div>
+  );
+}
+
+export function Markdown({ children, rateCommands = false }: { children: string; rateCommands?: boolean }) {
   return (
     // min-w-0 lets this shrink inside a flex parent; overflow-wrap:anywhere breaks a
     // long unbreakable token (a path, URL or command with no spaces) instead of
     // letting it push the whole summary card wider than its container.
     <div className="min-w-0 break-words text-sm [overflow-wrap:anywhere]">
-      <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
-        {children}
-      </ReactMarkdown>
+      <RateCommands.Provider value={rateCommands}>
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={components}>
+          {children}
+        </ReactMarkdown>
+      </RateCommands.Provider>
     </div>
   );
 }

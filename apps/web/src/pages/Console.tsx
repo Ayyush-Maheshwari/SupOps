@@ -15,6 +15,8 @@ import type { Agent, Run, RunDetail, Target, ToolCall } from '../lib/types';
 import { AttachmentStrip, UserContent } from '../components/Attachments';
 import { FeedbackBar } from '../components/FeedbackBar';
 import { useImageAttachments } from '../lib/images';
+import { useDictation } from '../lib/useDictation';
+import { MicButton } from '../components/MicButton';
 
 const SESSION_KEY = 'supops.consoleRun';
 const BUSY = ['queued', 'running', 'awaiting_approval'];
@@ -119,6 +121,15 @@ export function Console() {
   const consoleAgent = agents.data?.find((a) => a.slug === 'console') ?? agents.data?.[0];
 
   const att = useImageAttachments();
+  const dictation = useDictation(input, setInput);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
+  // Grow with the text: reset to one line, then fit the content (capped by max-h).
+  useEffect(() => {
+    const el = inputRef.current;
+    if (!el) return;
+    el.style.height = 'auto';
+    el.style.height = `${el.scrollHeight}px`;
+  }, [input]);
   const send = useMutation({
     mutationFn: async (raw: string) => {
       const text = raw || 'Look at the attached screenshot(s).';
@@ -251,7 +262,7 @@ export function Console() {
                 <div key={step.id} className="space-y-2">
                   {m.content && (
                     <Bubble icon={<Bot size={13} />} tint="text-violet" label="Assistant">
-                      <Markdown>{messageText(m.content)}</Markdown>
+                      <Markdown rateCommands={!!run?.policySnapshot?.advisory}>{messageText(m.content)}</Markdown>
                       {!m.tool_calls?.length && runId && projectId && !busy && (
                         <FeedbackBar runId={runId} stepId={step.id} text={messageText(m.content)} projectId={projectId} />
                       )}
@@ -297,16 +308,30 @@ export function Console() {
               onChange={setScope}
               locked={!!runId}
               lockedTo={run?.targets ?? []}
+              advisory={!!run?.policySnapshot?.advisory}
             />
             {/* The original Console input, unchanged in size. Screenshots attach by
                 paste or drop; their thumbnails appear above it only once there are some. */}
             <div className="mb-2 empty:hidden"><AttachmentStrip att={att} /></div>
             <div {...att.dropProps} className={clsx('flex gap-2 rounded-inner', att.dragging && 'ring-2 ring-blue/60')}>
+              {/* The mic sits inside the box, as in Investigate and run follow-ups. The box
+                  grows with its text (up to max-h) rather than having a resize grip,
+                  which the mic would otherwise cover. */}
+              <div className="relative min-w-0 flex-1">
               <textarea
-                className="input max-h-40 min-h-[44px] resize-y py-2.5"
+                ref={inputRef}
+                className="input block max-h-40 min-h-[44px] resize-none py-2.5 pr-12"
                 rows={1}
                 placeholder={
-                  att.dragging ? 'Drop to attach' : runId ? 'Follow up…' : 'e.g. how many pods are not Running on k3master?'
+                  att.dragging
+                    ? 'Drop to attach'
+                    : dictation.listening
+                      ? 'Listening…'
+                      : runId
+                        ? 'Follow up…'
+                        : targets.data?.length
+                          ? 'e.g. how many pods are not Running on k3master?'
+                          : 'e.g. nginx returns 502 after a deploy. What should I check?'
                 }
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
@@ -315,15 +340,23 @@ export function Console() {
                   // Enter sends; Shift+Enter is a newline. Standard for a chat box.
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    if ((input.trim() || att.images.length) && !busy && !att.busy) send.mutate(input.trim());
+                    if ((input.trim() || att.images.length) && !busy && !att.busy) {
+                      dictation.cancel();
+                      send.mutate(input.trim());
+                    }
                   }
                 }}
                 disabled={!consoleAgent}
               />
+              <span className="absolute bottom-[3px] right-1"><MicButton dictation={dictation} disabled={!consoleAgent} className="!h-[38px] !w-[38px]" /></span>
+              </div>
               <button
                 className="btn-primary shrink-0 self-end"
                 disabled={(!input.trim() && !att.images.length) || busy || send.isPending || att.busy || !consoleAgent}
-                onClick={() => send.mutate(input.trim())}
+                onClick={() => {
+                  dictation.cancel();
+                  send.mutate(input.trim());
+                }}
               >
                 {send.isPending ? <Spinner /> : <Send size={15} />}
               </button>
@@ -339,6 +372,7 @@ export function Console() {
                 e.target.value = '';
               }}
             />
+            {dictation.error && <p className="mt-1.5 px-1 text-[11px] text-amber">{dictation.error}</p>}
             <p className="mt-1.5 px-1 text-[11px] text-muted">
               {targets.data?.length ? (
                 <>
@@ -349,7 +383,7 @@ export function Console() {
                   screenshots
                 </>
               ) : (
-                'No targets registered — the agent can answer questions but cannot inspect anything.'
+                'Advisory: no systems are connected, so nothing runs. You get the checks and fixes to run yourself — paste the output back here.'
               )}
             </p>
           </div>
@@ -456,14 +490,17 @@ function ActionCard({ call }: { call: ToolCall }) {
  * agent can reach rather than a control that would lie about being changeable.
  */
 function ScopePicker({
-  targets, selected, onChange, locked, lockedTo,
+  targets, selected, onChange, locked, lockedTo, advisory,
 }: {
   targets: Target[];
   selected: string[];
   onChange: (next: string[]) => void;
   locked: boolean;
   lockedTo: string[];
+  /** An advisory session reaches nothing, so it has no scope to show. */
+  advisory: boolean;
 }) {
+  if (locked && advisory) return null;
   if (locked) {
     return (
       <p className="mb-2 flex items-center gap-1.5 px-1 text-[11px] text-muted">

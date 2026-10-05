@@ -567,7 +567,11 @@ export class Engine {
     const inScope = new Set(run.targetsSnapshot.map((t) => t.slug));
     const targets = loadTargets(this.db, run.projectId).filter((t) => inScope.has(t.slug));
     const snapshotKeys = run.toolsSnapshot.map((t) => t.function.name);
-    const defs = snapshotKeys.length
+    // An advisory run was started with no tools on purpose; an empty snapshot must
+    // not fall back to the agent's tool list below.
+    const defs = run.policySnapshot.advisory
+      ? []
+      : snapshotKeys.length
       ? snapshotKeys.map((k) => this.registry.get(k)).filter((d): d is NonNullable<typeof d> => !!d)
       : this.registry.resolve(effectiveToolKeys(agent.toolKeys ?? null));
 

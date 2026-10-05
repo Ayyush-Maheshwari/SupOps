@@ -74,17 +74,22 @@ export interface KnowledgeContext {
 
 export function buildKnowledgeContext(
   db: Db,
-  i: { projectId: string; scope: RunScope; task: string; runbookId?: string | null },
+  /**
+   * `scope: 'all'` is for advisory runs: there are no targets to scope by, and a
+   * runbook written for one machine is still the best guide to the problem described.
+   */
+  i: { projectId: string; scope: RunScope | 'all'; task: string; runbookId?: string | null },
 ): KnowledgeContext {
   const used: KnowledgeContext['used'] = [];
   const parts: string[] = [];
+  const scope = i.scope;
 
   const approved = db
     .select()
     .from(knowledgeDocs)
     .where(and(eq(knowledgeDocs.projectId, i.projectId), eq(knowledgeDocs.status, 'approved')))
     .all()
-    .filter((d) => scopeMatches(d.scope, i.scope));
+    .filter((d) => scope === 'all' || scopeMatches(d.scope, scope));
 
   // A runbook the operator chose: its full text, regardless of the search.
   const runbook = i.runbookId ? approved.find((d) => d.id === i.runbookId && d.kind === 'runbook') : undefined;

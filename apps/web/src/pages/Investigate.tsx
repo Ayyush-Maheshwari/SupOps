@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Check, Send } from 'lucide-react';
+import { BookOpen, Check, Send, Server } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { PageHeader } from '../components/Layout';
@@ -12,6 +12,8 @@ import { HEALTH_STYLE } from '../lib/format';
 import type { Agent, Run, Target } from '../lib/types';
 import { useImageAttachments } from '../lib/images';
 import { AttachButton, AttachmentStrip } from '../components/Attachments';
+import { MicButton } from '../components/MicButton';
+import { useDictation } from '../lib/useDictation';
 
 const EXAMPLES = [
   'Disk usage is climbing. Work out what is filling it.',
@@ -30,6 +32,14 @@ export function Investigate() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const att = useImageAttachments();
+  const dictation = useDictation(task, setTask);
+  /**
+   * Live works on the project's systems. Advisory has no access to anything: it
+   * reasons from the description, screenshots and the project's runbooks and facts,
+   * and hands back commands for a person to run. With no systems registered it is
+   * the only mode there is.
+   */
+  const [mode, setMode] = useState<'live' | 'advisory'>('live');
   const hasInput = !!task.trim() || att.images.length > 0 || !!runbookId;
 
   const runbooks = useQuery({
@@ -81,6 +91,8 @@ export function Investigate() {
     '';
   const scoped = selected.length > 0 && selected.length < primaries.length;
   const chosenTargets = primaries.filter((t) => selected.includes(t.id));
+  const noTargets = targets.data?.length === 0;
+  const advisory = noTargets || mode === 'advisory';
   const hiddenVmCount = chosenTargets.reduce((n, t) => n + childrenOf(t).length, 0);
 
   const toggle = (id: string) =>
@@ -88,6 +100,7 @@ export function Investigate() {
 
   async function start() {
     if (!hasInput || !chosenAgent || !projectId) return;
+    dictation.cancel();
     setBusy(true);
     setError(null);
     try {
@@ -102,7 +115,7 @@ export function Investigate() {
         projectId,
         agentId: chosenAgent,
         task: task.trim() || (runbookId ? 'Follow the runbook.' : 'Look at the attached screenshot(s) and investigate what they show.'),
-        ...(ids.size ? { targetIds: [...ids] } : {}),
+        ...(advisory ? { advisory: true } : ids.size ? { targetIds: [...ids] } : {}),
         ...(att.images.length ? { images: att.payload() } : {}),
         ...(runbookId ? { runbookId } : {}),
       });
@@ -118,14 +131,45 @@ export function Investigate() {
       <PageHeader title="Investigate" subtitle="Tell it what's wrong. It digs through the evidence and figures out why." />
 
       <div className="mx-auto max-w-3xl space-y-4 p-6">
-        {targets.data?.length === 0 && (
-          <div className="rounded-lg border border-amber/30 bg-amber/5 px-4 py-3 text-sm text-amber">
-            No targets registered yet. Add one under Targets before starting a run.
-          </div>
-        )}
-
         <Panel className="p-4">
           <div className="space-y-4">
+            {noTargets ? (
+              <p className="flex gap-2.5 rounded-inner border border-hairline bg-tile-2/60 px-3.5 py-3 text-xs leading-relaxed text-muted">
+                <BookOpen size={15} className="mt-px shrink-0 text-blue-text" />
+                <span>
+                  <span className="font-medium text-ink">Advisory mode.</span> No systems are connected, so SupOps
+                  cannot run anything. It works from your description, screenshots and this project's runbooks and
+                  facts, and gives you the checks and the fix to run yourself.
+                </span>
+              </p>
+            ) : (
+              <div role="radiogroup" aria-label="Mode" className="grid grid-cols-2 gap-1 rounded-inner border border-hairline bg-tile-2/60 p-1">
+                {([
+                  ['live', Server, 'Live systems', 'Checks your systems itself'],
+                  ['advisory', BookOpen, 'Advisory', 'No access — advises from facts'],
+                ] as const).map(([m, Icon, title, hint]) => (
+                  <button
+                    key={m}
+                    type="button"
+                    role="radio"
+                    aria-checked={mode === m}
+                    onClick={() => setMode(m)}
+                    className={clsx(
+                      'flex min-h-[44px] items-center gap-2.5 rounded-[10px] px-3 py-2 text-left transition-colors',
+                      mode === m ? 'bg-tile text-ink shadow-sm ring-1 ring-edge' : 'text-muted hover:text-ink',
+                    )}
+                  >
+                    <Icon size={15} className={mode === m ? 'text-blue-text' : ''} />
+                    <span className="min-w-0">
+                      <span className="block text-sm font-medium">{title}</span>
+                      <span className="block truncate text-[11px] text-muted">{hint}</span>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {!advisory && (
             <Field
               label="Targets"
               hint={
@@ -190,13 +234,26 @@ export function Investigate() {
                 )}
               </div>
             </Field>
+            )}
 
-            <Field label="What is wrong?" hint="Be specific about the symptom. Paste or drop a screenshot (a dashboard, an error) and the agent will read it.">
+            <Field
+              label="What is wrong?"
+              hint={
+                advisory
+                  ? 'Give it what you know: the symptom, error messages, log lines, versions, and what changed recently. Screenshots help too.'
+                  : 'Be specific about the symptom. Paste or drop a screenshot (a dashboard, an error) and the agent will read it.'
+              }
+            >
               <div {...att.dropProps} className={clsx('space-y-2 rounded-inner', att.dragging && 'ring-2 ring-blue/60 ring-offset-2 ring-offset-tile')}>
+              <div className="relative">
               <textarea
-                className="input min-h-32 resize-y"
+                className="input min-h-32 resize-y pr-12"
                 placeholder={
-                  chosenTargets.length === 1
+                  dictation.listening
+                    ? 'Listening…'
+                    : advisory
+                      ? 'e.g. our checkout API returns 502s since this morning\'s deploy. nginx error log says "upstream timed out"'
+                      : chosenTargets.length === 1
                     ? `e.g. disk is filling up on ${chosenTargets[0]!.slug}, or just: check disk usage`
                     : 'e.g. checkout is returning 500s since about 14:20'
                 }
@@ -205,6 +262,9 @@ export function Investigate() {
                 onPaste={att.onPaste}
                 autoFocus
               />
+              <span className="absolute bottom-2 right-2"><MicButton dictation={dictation} /></span>
+              </div>
+              {dictation.error && <p className="text-[11px] text-amber">{dictation.error}</p>}
               <AttachmentStrip att={att} />
               <div className="flex items-center gap-2 text-[11px] text-muted">
                 <AttachButton att={att} />
@@ -240,14 +300,16 @@ export function Investigate() {
 
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs text-muted">
-                {scoped
+                {advisory
+                  ? 'Nothing runs. You get likely causes, checks and a fix, and every command is rated by the risk engine before you run it.'
+                  : scoped
                   ? 'Targets outside this selection are not just discouraged — they are absent from the tools the agent is given.'
                   : 'Read-only checks run immediately. Anything riskier will pause for your approval.'}
               </p>
               <button
                 className="btn-primary shrink-0"
                 onClick={start}
-                disabled={busy || att.busy || !hasInput || !chosenAgent || !targets.data?.length}
+                disabled={busy || att.busy || !hasInput || !chosenAgent || !targets.data || (!advisory && !targets.data.length)}
               >
                 {busy ? <Spinner /> : <Send size={15} />} Start
               </button>
