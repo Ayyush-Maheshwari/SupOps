@@ -171,6 +171,8 @@ const startBody = z.object({
   runbookId: z.string().optional(),
   /** Advise only: no targets, no tools (see StartRunInput.advisory). */
   advisory: z.boolean().optional(),
+  /** Advisory runs: allow read-only network checks from the SupOps server (default true). */
+  networkChecks: z.boolean().optional(),
 });
 
 runRoutes.post('/', (req, res) => {
@@ -179,7 +181,7 @@ runRoutes.post('/', (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid run' });
     return;
   }
-  const { projectId, agentId, task, targetIds, interactive, images, runbookId, advisory } = parsed.data;
+  const { projectId, agentId, task, targetIds, interactive, images, runbookId, advisory, networkChecks } = parsed.data;
   const decoded = decodeImages(images);
   if (!decoded.ok) {
     res.status(400).json({ error: decoded.error });
@@ -197,6 +199,7 @@ runRoutes.post('/', (req, res) => {
     images: decoded.decoded,
     runbookId: runbookId ?? null,
     advisory: advisory ?? false,
+    networkChecks: networkChecks ?? true,
   });
   if (!result.ok) {
     res.status(result.code).json({ error: result.error });

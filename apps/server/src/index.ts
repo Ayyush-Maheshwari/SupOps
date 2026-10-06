@@ -19,6 +19,8 @@ app.use(cors());
 // that one router gets a bigger body limit; everything else keeps 1 MB. The first
 // parser to run wins -- express.json skips a body that is already parsed.
 app.use('/api/runs', express.json({ limit: '16mb' }));
+// Knowledge imports carry up to five documents of 10 MB each, base64-encoded.
+app.use('/api/knowledge/import', express.json({ limit: '70mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', api);
 

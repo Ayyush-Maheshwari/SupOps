@@ -37,9 +37,10 @@ RUN npm run build --workspace=@supops/web
 FROM node:22-bookworm-slim AS runtime
 WORKDIR /app
 ENV NODE_ENV=production SERVE_WEB=1
-# openssl for first-run secret generation in the entrypoint.
+# openssl for first-run secret generation in the entrypoint; ping and traceroute
+# for the read-only network checks advisory runs make (net_check).
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends openssl \
+  && apt-get install -y --no-install-recommends openssl iputils-ping traceroute \
   && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /usr/local/bin/kubectl /usr/local/bin/kubectl

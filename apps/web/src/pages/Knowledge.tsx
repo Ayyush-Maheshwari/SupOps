@@ -2,13 +2,14 @@ import { useEffect, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { Archive, BookOpen, Check, Eye, Pencil, Play, Plus, Search, Trash2 } from 'lucide-react';
+import { Archive, BookOpen, Check, Eye, FileText, Pencil, Play, Plus, Search, Trash2, Upload } from 'lucide-react';
 import { api, del, patch, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { timeAgo } from '../lib/format';
 import { PageHeader } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
 import { Empty, Panel, Segmented, Spinner, Switch } from '../components/ui';
+import { KnowledgeImport } from '../components/KnowledgeImport';
 import type { Target } from '../lib/types';
 
 type Kind = 'runbook' | 'note' | 'fact';
@@ -25,6 +26,8 @@ export interface KnowledgeDoc {
   scope: { targetIds?: string[]; kinds?: string[]; envs?: string[] };
   pinned: boolean;
   status: Status;
+  /** Where an imported document came from, e.g. "ops-handbook.pdf, p. 4–7". */
+  source?: string | null;
   useCount: number;
   lastUsedAt: number | null;
   createdAt: number;
@@ -45,6 +48,9 @@ export function Knowledge() {
   const [kind, setKind] = useState<Kind | 'all'>('all');
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState<string | 'new' | null>(null);
+  const [importing, setImporting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
+  const qc = useQueryClient();
 
   const list = useQuery({
     queryKey: ['knowledge', projectId, status, q],
@@ -65,13 +71,39 @@ export function Knowledge() {
         title="Knowledge"
         subtitle="Runbooks, notes and facts your agents are given at the start of every run. Only approved documents are used."
         action={
-          <button className="btn-primary" onClick={() => setSelected('new')}>
-            <Plus size={16} /> New document
-          </button>
+          <div className="flex gap-2">
+            <button className="btn-ghost" onClick={() => { setImporting(true); setNotice(null); }}>
+              <Upload size={16} /> Import
+            </button>
+            <button className="btn-primary" onClick={() => { setImporting(false); setSelected('new'); }}>
+              <Plus size={16} /> New document
+            </button>
+          </div>
         }
       />
+      {importing ? (
+        <div className="p-6">
+          <KnowledgeImport
+            projectId={projectId!}
+            isAdmin={isAdmin}
+            onClose={() => setImporting(false)}
+            onSaved={(message) => {
+              setImporting(false);
+              setNotice(message);
+              setStatus(isAdmin ? 'approved' : 'draft');
+              void qc.invalidateQueries({ queryKey: ['knowledge'] });
+              void qc.invalidateQueries({ queryKey: ['knowledge-drafts'] });
+            }}
+          />
+        </div>
+      ) : (
       <div className="grid gap-4 p-6 lg:grid-cols-5">
         <div className="space-y-3 lg:col-span-2">
+          {notice && (
+            <p className="flex items-center gap-2 rounded-inner border border-green/30 bg-green/10 px-3 py-2 text-xs text-green">
+              <Check size={14} /> {notice}
+            </p>
+          )}
           <div className="flex flex-wrap items-center gap-2">
             <Segmented
               label="Status"
@@ -125,7 +157,7 @@ export function Knowledge() {
               <Empty
                 icon={<BookOpen size={26} />}
                 title={q ? 'No matches' : status === 'draft' ? 'No drafts waiting' : 'Nothing here yet'}
-                hint="Write down how things are set up and how you fix them — the agent reads it at the start of every run."
+                hint="Write down how things are set up and how you fix them, or import existing runbooks and docs — the agent reads them at the start of every run."
               />
             )}
           </Panel>
@@ -147,6 +179,7 @@ export function Knowledge() {
           )}
         </div>
       </div>
+      )}
     </>
   );
 }
@@ -276,6 +309,9 @@ function DocEditor({ id, projectId, isAdmin, onClose }: { id: string | null; pro
                 {d.scope.targetIds?.length ? <span>· {d.scope.targetIds.length} target{d.scope.targetIds.length === 1 ? '' : 's'}</span> : null}
                 {d.tags.map((t) => <span key={t} className="chip border border-edge bg-tile-2">{t}</span>)}
               </div>
+              {d.source && (
+                <p className="flex items-center gap-1.5 text-[11px] text-muted"><FileText size={12} /> Imported from {d.source}</p>
+              )}
               <div className="rounded-inner border border-hairline bg-ground/40 p-4"><Markdown>{d.body}</Markdown></div>
               <div className="flex flex-wrap gap-2">
                 {canEdit && <button className="btn-ghost" onClick={() => setEditing(true)}><Pencil size={15} /> Edit</button>}

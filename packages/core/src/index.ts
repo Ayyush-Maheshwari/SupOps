@@ -9,3 +9,4 @@ export * from './health-judge.ts';
 export * from './maintenance/index.ts';
 export * from './learning/signature.ts';
 export * from './knowledge/retrieve.ts';
+export * from './knowledge/import.ts';

@@ -35,6 +35,8 @@ export interface RiskPolicy {
    * advises from the operator's facts and the project's knowledge instead.
    */
   advisory?: boolean;
+  /** Advisory runs only: read-only network checks (net_check) from the SupOps server are allowed. */
+  networkChecks?: boolean;
 }
 
 export const DEFAULT_RISK_POLICY: RiskPolicy = {

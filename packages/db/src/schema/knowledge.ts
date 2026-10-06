@@ -38,6 +38,8 @@ export const knowledgeDocs = sqliteTable(
     pinned: integer('pinned', { mode: 'boolean' }).notNull().default(false),
     status: text('status').$type<KnowledgeStatus>().notNull().default('draft'),
     sourceRunId: text('source_run_id').references(() => runs.id, { onDelete: 'set null' }),
+    /** Where an imported document came from, e.g. "ops-handbook.pdf, p. 4–7". */
+    source: text('source'),
     createdBy: text('created_by').references(() => users.id, { onDelete: 'set null' }),
     approvedBy: text('approved_by').references(() => users.id, { onDelete: 'set null' }),
     approvedAt: ts('approved_at'),

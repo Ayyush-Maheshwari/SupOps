@@ -6,7 +6,7 @@ import { BookOpen, Check, Send, Server } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { PageHeader } from '../components/Layout';
-import { EnvBadge, Field, HealthBadge, Panel, Spinner } from '../components/ui';
+import { EnvBadge, Field, HealthBadge, Panel, Spinner, Switch } from '../components/ui';
 import { HealthRing } from '../components/viz';
 import { HEALTH_STYLE } from '../lib/format';
 import type { Agent, Run, Target } from '../lib/types';
@@ -40,6 +40,8 @@ export function Investigate() {
    * the only mode there is.
    */
   const [mode, setMode] = useState<'live' | 'advisory'>('live');
+  /** Advisory only: read-only network checks (curl, ping, DNS, TLS...) from the SupOps server. */
+  const [networkChecks, setNetworkChecks] = useState(true);
   const hasInput = !!task.trim() || att.images.length > 0 || !!runbookId;
 
   const runbooks = useQuery({
@@ -115,7 +117,7 @@ export function Investigate() {
         projectId,
         agentId: chosenAgent,
         task: task.trim() || (runbookId ? 'Follow the runbook.' : 'Look at the attached screenshot(s) and investigate what they show.'),
-        ...(advisory ? { advisory: true } : ids.size ? { targetIds: [...ids] } : {}),
+        ...(advisory ? { advisory: true, networkChecks } : ids.size ? { targetIds: [...ids] } : {}),
         ...(att.images.length ? { images: att.payload() } : {}),
         ...(runbookId ? { runbookId } : {}),
       });
@@ -166,6 +168,20 @@ export function Investigate() {
                     </span>
                   </button>
                 ))}
+              </div>
+            )}
+
+            {advisory && (
+              <div className="flex items-start gap-3 rounded-inner border border-hairline bg-tile-2/40 px-3.5 py-3">
+                <Switch label="Network checks from SupOps" checked={networkChecks} onChange={setNetworkChecks} />
+                <div className="min-w-0 text-xs">
+                  <div className="font-medium text-ink">Network checks from SupOps</div>
+                  <p className="mt-0.5 leading-relaxed text-muted">
+                    {networkChecks
+                      ? 'The agent may check URLs, DNS, ping, ports, TLS certificates, traceroute and domain registration from the SupOps server. Read-only; internal addresses ask you first.'
+                      : 'Off: the agent only advises from what you give it and the runbooks.'}
+                  </p>
+                </div>
               </div>
             )}
 
@@ -301,7 +317,9 @@ export function Investigate() {
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs text-muted">
                 {advisory
-                  ? 'Nothing runs. You get likely causes, checks and a fix, and every command is rated by the risk engine before you run it.'
+                  ? networkChecks
+                    ? 'Nothing runs on your systems. You get likely causes, checks and a fix, with every command rated by the risk engine.'
+                    : 'Nothing runs. You get likely causes, checks and a fix, and every command is rated by the risk engine before you run it.'
                   : scoped
                   ? 'Targets outside this selection are not just discouraged — they are absent from the tools the agent is given.'
                   : 'Read-only checks run immediately. Anything riskier will pause for your approval.'}

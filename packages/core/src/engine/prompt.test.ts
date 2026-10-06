@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { ADVISORY_PROMPT, buildOpeningMessage, buildSystemPrompt } from './prompt.ts';
+import { ADVISORY_PROMPT, NETWORK_CHECKS_PROMPT, buildOpeningMessage, buildSystemPrompt } from './prompt.ts';
 
 test('advisory runs say there is no access, and list no targets', () => {
   assert.ok(buildSystemPrompt(null, 'agent', { advisory: true }).endsWith(ADVISORY_PROMPT));
@@ -11,4 +11,14 @@ test('advisory runs say there is no access, and list no targets', () => {
   assert.match(opening, /PROJECT KNOWLEDGE/);
   assert.doesNotMatch(opening, /Targets you may act on/);
   assert.ok(opening.endsWith('Task:\nnginx 502s'));
+});
+
+test('advisory runs with network checks are told what net_check is and where it runs from', () => {
+  const sys = buildSystemPrompt(null, 'agent', { advisory: true, networkChecks: true });
+  assert.ok(sys.endsWith(NETWORK_CHECKS_PROMPT));
+  assert.ok(!buildSystemPrompt(null, 'agent', { networkChecks: true }).includes('NETWORK CHECKS'), 'only for advisory runs');
+  assert.ok(!buildSystemPrompt(null, 'agent', { advisory: true }).includes('NETWORK CHECKS'));
+  assert.match(NETWORK_CHECKS_PROMPT, /not from the operator's network/);
+  const opening = buildOpeningMessage({ projectName: 'p', targets: [], task: 't', advisory: true, networkChecks: true });
+  assert.match(opening, /net_check/);
 });

@@ -21,8 +21,10 @@
     "drizzle-orm": "^0.45.2",
     "express": "^4.21.2",
     "jsonwebtoken": "^9.0.2",
+    "mammoth": "^1.13.0",
     "nanoid": "^5.0.9",
     "socket.io": "^4.8.1",
+    "unpdf": "^1.8.1",
     "zod": "^3.24.1"
   },
   "devDependencies": {

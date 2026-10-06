@@ -25,6 +25,12 @@ export interface CommandRating {
   command: string;
   tier: RiskTier;
   reason: string;
+  /**
+   * False when the tier comes only from the command not being in the ruleset. A live
+   * run still treats that as high (fail closed), but telling a person "risky change"
+   * about `pg_isready` would be wrong: "not recognised" is what is actually known.
+   */
+  recognised: boolean;
 }
 
 /** One line of a suggested ```bash block as a command, or null for a blank or comment line. */
@@ -42,6 +48,8 @@ export function rateSuggestedCommand(command: string): CommandRating {
   // Placeholders like <service> are not redirections: rate the command as it will
   // be typed, with a name in their place.
   const verdict = classifyShellCommand(command.replace(/<([\w.:/@-]+)>/g, '$1'), UNSEEN);
-  const worst = verdict.contributions.filter((c) => c.tier === verdict.tier).at(-1);
-  return { command, tier: verdict.tier, reason: worst?.reason ?? '' };
+  const decisive = verdict.contributions.filter((c) => c.tier === verdict.tier);
+  const worst = decisive.at(-1);
+  const recognised = !decisive.length || decisive.some((c) => c.ruleId !== 'shell.unknown');
+  return { command, tier: verdict.tier, reason: worst?.reason ?? '', recognised };
 }

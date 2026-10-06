@@ -16,6 +16,7 @@ import { DEFAULT_CONTEXT_TOKENS, fitToContext } from './context.ts';
 import { signatureOf } from '../learning/signature.ts';
 import { hashArgs, targetFingerprint } from './canonical.ts';
 import { loadTargets } from './targets.ts';
+import { isNetworkTarget, netCheckTool, NETWORK_TARGET } from '../tools/net-check.ts';
 import { RunStore, type RunRow, type ToolCallRow } from './store.ts';
 
 const LEASE_TTL_MS = 60_000;
@@ -453,7 +454,8 @@ export class Engine {
       targetFingerprint: targetFingerprint(target),
       signature,
       renderedCommand: rendered,
-      targetId: target.id,
+      // The SupOps server is not a row in targets (and the column is a foreign key).
+      targetId: isNetworkTarget(target) ? null : target.id,
     } as never);
 
     this.event(run.id, {
@@ -569,9 +571,17 @@ export class Engine {
     const snapshotKeys = run.toolsSnapshot.map((t) => t.function.name);
     // An advisory run was started with no tools on purpose; an empty snapshot must
     // not fall back to the agent's tool list below.
-    const defs = run.policySnapshot.advisory
-      ? []
-      : snapshotKeys.length
+    // An advisory run has no targets; its only possible tool is net_check, on the
+    // virtual SupOps-server target, and only if the run was started with it.
+    if (run.policySnapshot.advisory) {
+      const checks = run.policySnapshot.networkChecks && snapshotKeys.includes(netCheckTool.key);
+      return {
+        budget: agent.budget,
+        killSwitch: project.killSwitch,
+        tools: checks ? bindTools([netCheckTool as never], [NETWORK_TARGET]) : [],
+      };
+    }
+    const defs = snapshotKeys.length
       ? snapshotKeys.map((k) => this.registry.get(k)).filter((d): d is NonNullable<typeof d> => !!d)
       : this.registry.resolve(effectiveToolKeys(agent.toolKeys ?? null));
 

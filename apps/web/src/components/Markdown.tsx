@@ -116,7 +116,7 @@ function ShellBlock({ text }: { text: string }) {
   const commands = lines.map(commandOf).filter((c): c is string => !!c);
   const ratings = useQuery({
     queryKey: ['rate-commands', commands],
-    queryFn: () => post<Array<{ tier: RiskTier; reason: string }>>('/runs/rate-commands', { commands }),
+    queryFn: () => post<Array<{ tier: RiskTier; reason: string; recognised: boolean }>>('/runs/rate-commands', { commands }),
     enabled: rate && commands.length > 0,
     staleTime: Infinity,
   });
@@ -131,8 +131,11 @@ function ShellBlock({ text }: { text: string }) {
             <span key={i} className={clsx('flex items-baseline gap-3', !cmd && line.trim() && 'text-muted')}>
               <span className="min-w-0 flex-1">{line || ' '}</span>
               {r && (
-                <span title={r.reason} className={clsx('shrink-0 font-sans text-[10px] uppercase tracking-wide', TIER_STYLE[r.tier].text)}>
-                  {VERDICT[r.tier]}
+                <span
+                  title={r.recognised ? r.reason : 'The risk engine does not know this command, so a live run would ask before running it. Check what it does first.'}
+                  className={clsx('shrink-0 font-sans text-[10px] uppercase tracking-wide', r.recognised ? TIER_STYLE[r.tier].text : 'text-muted')}
+                >
+                  {r.recognised ? VERDICT[r.tier] : 'not recognised'}
                 </span>
               )}
             </span>

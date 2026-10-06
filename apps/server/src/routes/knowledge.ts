@@ -6,6 +6,8 @@ import { searchKnowledge } from '@supops/core';
 import { isAdmin } from '../auth.ts';
 import { db } from '../context.ts';
 import { audit } from '../services/audit.ts';
+import { getImportJob, startImport } from '../services/knowledge-import.ts';
+import { MAX_FILE_BYTES } from '../services/doc-extract.ts';
 
 /**
  * Project knowledge: runbooks, notes and facts the agent is given at the start of a
@@ -54,6 +56,114 @@ knowledgeRoutes.get('/', (req, res) => {
       .orderBy(desc(knowledgeDocs.updatedAt), desc(knowledgeDocs.createdAt))
       .all(),
   );
+});
+
+// ---- Import: upload existing documents, review what the model split out, save ----
+
+const importBody = z.object({
+  projectId: z.string().min(1),
+  files: z
+    .array(z.object({ name: z.string().min(1).max(200), data: z.string().min(1) }))
+    .min(1, 'Choose at least one file')
+    .max(5, 'Import at most 5 files at a time'),
+});
+
+/** Start an import. The reply is a job id; the page polls GET /import/:id. */
+knowledgeRoutes.post('/import', (req, res) => {
+  const parsed = importBody.safeParse(req.body);
+  if (!parsed.success) {
+    res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid import' });
+    return;
+  }
+  const files = parsed.data.files.map((f) => ({ name: f.name.replace(/[\\/]/g, '_'), data: Buffer.from(f.data.replace(/^data:[^,]*,/, ''), 'base64') }));
+  const big = files.find((f) => f.data.length > MAX_FILE_BYTES);
+  if (big) {
+    res.status(413).json({ error: `${big.name} is larger than 10 MB.` });
+    return;
+  }
+  const job = startImport({ projectId: parsed.data.projectId, userId: req.user?.id ?? null, files });
+  res.status(202).json({ id: job.id });
+});
+
+knowledgeRoutes.get('/import/:id', (req, res) => {
+  const job = getImportJob(req.params.id, req.user?.id ?? null);
+  if (!job) {
+    res.status(404).json({ error: 'This import has expired. Upload the file again.' });
+    return;
+  }
+  res.json(job);
+});
+
+const saveBody = z.object({
+  projectId: z.string().min(1),
+  docs: z
+    .array(
+      docBody.extend({
+        source: z.string().max(300).optional(),
+        /** Update this existing document instead of creating a new one. */
+        replaceId: z.string().optional(),
+      }),
+    )
+    .min(1, 'Select at least one document')
+    .max(200),
+});
+
+/**
+ * Save reviewed proposals, all or nothing. The same rules as a typed document: an
+ * admin's are approved, anyone else's are drafts, and only an admin may overwrite an
+ * approved document.
+ */
+knowledgeRoutes.post('/import/save', (req, res) => {
+  const parsed = saveBody.safeParse(req.body);
+  if (!parsed.success) {
+    const issue = parsed.error.issues[0];
+    res.status(400).json({ error: issue ? `${issue.path.slice(0, 2).join(' ')}: ${issue.message}` : 'Invalid documents' });
+    return;
+  }
+  const { projectId, docs } = parsed.data;
+  const admin = isAdmin(req.user);
+  const existing = db.select().from(knowledgeDocs).where(eq(knowledgeDocs.projectId, projectId)).all();
+  const byId = new Map(existing.map((d) => [d.id, d]));
+
+  const replaced = new Set(docs.map((d) => d.replaceId).filter(Boolean));
+  const takenSlugs = new Set(existing.filter((d) => !replaced.has(d.id)).map((d) => d.slug));
+  for (const d of docs) {
+    const target = d.replaceId ? byId.get(d.replaceId) : undefined;
+    if (d.replaceId && !target) {
+      res.status(404).json({ error: `"${d.title}" was to update a document that no longer exists.` });
+      return;
+    }
+    if (target && !admin && target.status !== 'draft') {
+      res.status(403).json({ error: `Only owners and admins can update the approved document "${target.title}". Save it as a new draft instead.` });
+      return;
+    }
+    if (takenSlugs.has(d.slug)) {
+      res.status(409).json({ error: `The slug "${d.slug}" is already used. Change it before saving.` });
+      return;
+    }
+    takenSlugs.add(d.slug);
+  }
+
+  const now = new Date();
+  const approval = admin ? { status: 'approved' as const, approvedBy: req.user!.id, approvedAt: now } : { status: 'draft' as const };
+  const saved = db.transaction((tx) =>
+    docs.map(({ replaceId, source, ...d }) => {
+      const values = { ...d, pinned: d.pinned ?? d.kind === 'fact', source: source ?? null, updatedAt: now, ...approval };
+      return replaceId
+        ? tx.update(knowledgeDocs).set(values).where(eq(knowledgeDocs.id, replaceId)).returning().get()
+        : tx.insert(knowledgeDocs).values({ ...values, projectId, createdBy: req.user?.id ?? null }).returning().get();
+    }),
+  );
+  for (const [i, row] of saved.entries()) {
+    audit(req.user, {
+      projectId,
+      entity: 'knowledge',
+      entityId: row.id,
+      action: docs[i]!.replaceId ? 'import-update' : admin ? 'import' : 'import-draft',
+      after: { slug: row.slug, kind: row.kind, title: row.title, source: row.source },
+    });
+  }
+  res.status(201).json({ saved: saved.length, status: approval.status });
 });
 
 knowledgeRoutes.get('/drafts/count', (req, res) => {

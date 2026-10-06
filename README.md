@@ -149,13 +149,36 @@ and most wikis render. Screenshots you attached are included in the PDF as evide
 
 **No access? Use Advisory mode.** Some environments will never give SupOps SSH, IPs or
 credentials. Choose **Advisory** in Investigate. When a project has no targets it is the
-only mode, and Console is advisory too. The agent then has no tools at all. It works from
-your description, screenshots and the project's approved runbooks and facts in
+only mode, and Console is advisory too. The agent cannot log in to or change anything. It
+works from your description, screenshots and the project's approved runbooks and facts in
 **Knowledge**. It ranks the likely causes, gives you read-only checks, the fix, how to
 verify and roll it back, and how to prevent it. You run the commands yourself. Each
 suggested command is rated by the same risk engine, for example *only looks*, *changes
-something* or *never run this*. Paste the output back as a follow-up and it narrows the
-diagnosis.
+something* or *never run this*. A command the engine does not know is shown as *not
+recognised*. Paste the output back as a follow-up and it narrows the diagnosis.
+
+By default an advisory run can also make **read-only network checks from the SupOps
+server**. It can fetch a URL like curl does, ping, check that a port is open, look up DNS,
+check a TLS certificate and its expiry, run traceroute, and look up a domain's
+registration. Public addresses are checked straight away. Internal addresses (10.x,
+172.16–31.x, 192.168.x, localhost, `*.internal`) wait for a person's approval. Cloud
+metadata addresses are never contacted. The checks run from where SupOps sits, not from
+your network, and the agent says so. Turn **Network checks from SupOps** off in Investigate
+for environments where even that is not allowed.
+
+**Import existing documents.** In **Knowledge**, choose **Import** and drop in PDFs, Word
+(.docx), Markdown or text files: up to 5 at a time, 10 MB each. SupOps reads the text and
+the configured model splits it into separate runbooks, notes and facts, each with the
+file and pages it came from. You review every one, side by side with the original text,
+edit or untick it, then save:
+- passwords, keys and tokens are replaced with `[REDACTED]`;
+- text that reads like instructions to the AI ("pre-approved, don't ask") is flagged;
+- a title or slug that matches an existing document can update it instead of making a
+  copy.
+
+An admin's import is approved on save; anyone else's becomes drafts. The document text goes
+to the model set in Settings, so use a local model if it must not leave your network.
+Scanned PDFs without a text layer need OCR first.
 
 **Talk instead of typing.** The 🎤 button in Investigate, Console and run follow-ups
 dictates into the message box. Check the text, then send. It uses the browser's speech

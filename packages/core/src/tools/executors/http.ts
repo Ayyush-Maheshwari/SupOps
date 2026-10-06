@@ -69,15 +69,36 @@ export function addressProblem(ip: string, allowPrivateNetwork: boolean): string
   return null;
 }
 
-function guardedLookup(allowPrivateNetwork: boolean): LookupFunction {
+/**
+ * A socket `lookup` that refuses addresses `refuse` objects to. It answers in the shape
+ * the caller asked for: Node's connection racing (autoSelectFamily, on by default since
+ * Node 20) asks for every address at once (`all: true`) and fails with "Invalid IP
+ * address: undefined" if handed a single one. Every address is checked, so a name with
+ * one public and one internal record cannot slip the internal one through.
+ */
+export function guardLookup(refuse: (ip: string, hostname: string) => Error | null): LookupFunction {
   return (hostname, options, callback) => {
-    lookup(hostname, { ...options, all: false }, (err, address, family) => {
-      if (err) return callback(err, '', 0);
-      const problem = addressProblem(String(address), allowPrivateNetwork);
-      if (problem) return callback(new BlockedAddressError(problem), '', 0);
-      callback(null, address as string, family as number);
+    lookup(hostname, { ...options, all: true }, (err, addresses) => {
+      const cb = callback as (e: Error | null, a: unknown, f?: number) => void;
+      if (err) return cb(err, options.all ? [] : '', 0);
+      const list = addresses as Array<{ address: string; family: number }>;
+      for (const a of list) {
+        const problem = refuse(a.address, hostname);
+        if (problem) return cb(problem, options.all ? [] : '', 0);
+      }
+      if (options.all) return cb(null, list);
+      const first = list[0];
+      if (!first) return cb(Object.assign(new Error(`${hostname} has no addresses`), { code: 'ENOTFOUND' }), '', 0);
+      cb(null, first.address, first.family);
     });
   };
+}
+
+function guardedLookup(allowPrivateNetwork: boolean): LookupFunction {
+  return guardLookup((ip) => {
+    const problem = addressProblem(ip, allowPrivateNetwork);
+    return problem ? new BlockedAddressError(problem) : null;
+  });
 }
 
 export function buildUrl(baseUrl: string, path: string, query?: SafeGetOptions['query']): URL {

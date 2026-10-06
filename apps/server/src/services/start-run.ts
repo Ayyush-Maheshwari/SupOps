@@ -11,6 +11,8 @@ import {
   buildOpeningMessage,
   buildSystemPrompt,
   loadTargets,
+  netCheckTool,
+  NETWORK_TARGET,
 } from '@supops/core';
 import { db, engine, registry, settingsStore } from '../context.ts';
 import { worker } from '../worker.ts';
@@ -45,6 +47,8 @@ export interface StartRunInput {
    * never grant SupOps access can still investigate from runbooks and pasted facts.
    */
   advisory?: boolean;
+  /** Advisory runs only: allow read-only network checks from the SupOps server. Default true. */
+  networkChecks?: boolean;
 }
 
 export type StartRunResult =
@@ -96,7 +100,8 @@ export function startRun(input: StartRunInput): StartRunResult {
   // run commands on machines (ssh_exec) may run kubectl on clusters too. Agents saved
   // before cluster targets existed get it here rather than via a data migration.
   const resolved = registry.resolve(effectiveToolKeys(agent.toolKeys ?? null));
-  const tools = advisory ? [] : bindTools(input.unattended ? resolved.filter((d) => d.key !== 'confirm_target') : resolved, targets);
+  const networkChecks = advisory && input.networkChecks !== false;
+  const tools = advisory ? (networkChecks ? bindTools([netCheckTool as never], [NETWORK_TARGET]) : []) : bindTools(input.unattended ? resolved.filter((d) => d.key !== 'confirm_target') : resolved, targets);
   const targetSummaries = targets.map((t) => ({
     slug: t.slug,
     kind: t.kind,
@@ -105,7 +110,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     ...(t.config.kind === 'ssh' && t.config.addresses?.length ? { addresses: t.config.addresses } : {}),
   }));
 
-  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt, { advisory });
+  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt, { advisory, networkChecks });
 
   // The project's policy combined with this agent's override (which may raise the
   // agent up to the project ceiling, and can otherwise only tighten).
@@ -114,6 +119,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     ...merged,
     ...(input.unattended ? { unattended: true } : {}),
     ...(advisory ? { advisory: true } : {}),
+    ...(networkChecks ? { networkChecks: true } : {}),
   };
 
   // Everything the agent's world consists of is frozen here. A later edit to the
@@ -166,6 +172,7 @@ export function startRun(input: StartRunInput): StartRunResult {
       : describeAutonomy(policySnapshot, input.trigger ?? 'chat'),
     knowledge: knowledge.block,
     advisory,
+    networkChecks,
   });
   const imageIds = input.images?.length ? saveImages(run.id, input.images, input.startedBy ?? null) : [];
   engine.store.appendStep(run.id, { role: 'user', content: userContent(opening, imageIds) });

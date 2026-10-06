@@ -18,3 +18,12 @@ test('comment, blank and prompt-prefixed lines', () => {
   assert.equal(commandOfLine('   '), null);
   assert.equal(commandOfLine('$ df -h'), 'df -h');
 });
+
+test('a command the ruleset does not know is "not recognised", not called risky', () => {
+  const r = rateSuggestedCommand('pg_isready -h db-1 -p 5432');
+  assert.equal(r.recognised, false);
+  assert.equal(rateSuggestedCommand('systemctl restart nginx').recognised, true);
+  assert.equal(rateSuggestedCommand('df -h').recognised, true);
+  // Unknown joined to something dangerous is still judged on the dangerous part.
+  assert.equal(rateSuggestedCommand('pg_isready && rm -rf /').recognised, true);
+});
