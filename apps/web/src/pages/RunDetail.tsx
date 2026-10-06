@@ -218,7 +218,7 @@ export function RunDetail() {
         )}
       </header>
 
-      <div className={clsx('mx-auto max-w-4xl space-y-3 px-6 pt-6', canFollowUp ? 'pb-1' : 'pb-6')}>
+      <div className={clsx('mx-auto w-full max-w-4xl space-y-3 px-6 pt-6', canFollowUp ? 'pb-1' : 'pb-6')}>
         {detail.data.steps.map((step) => {
           const m = step.messageJson;
 

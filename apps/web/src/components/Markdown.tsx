@@ -8,7 +8,6 @@ import { Check, Copy } from 'lucide-react';
 import type { RiskTier } from '@supops/shared';
 import { post } from '../lib/api';
 import { copyText } from '../lib/clipboard';
-import { TIER_STYLE } from '../lib/format';
 import { Diagram } from './Diagram';
 
 /** Set by advisory runs: shell blocks are commands a person will run by hand. */
@@ -74,6 +73,9 @@ const components: Components = {
     const lang = child && 'properties' in child ? String(child.properties?.className ?? '') : '';
     // A diagram renders its own card; a <pre> around it would force monospace layout.
     if (/language-mermaid/.test(lang)) return <>{children}</>;
+    // Shell blocks render their own layout (a command list in advisory runs); inside a
+    // <pre> its explanations would inherit "never wrap" and run off narrow screens.
+    if (SHELL.test(lang)) return <div className="mb-2.5 last:mb-0">{children}</div>;
     return <pre className="mb-2.5 last:mb-0">{children}</pre>;
   },
   blockquote: ({ children }) => (
@@ -91,79 +93,152 @@ const components: Components = {
   td: ({ children }) => <td className="border border-hairline px-2 py-1.5 text-ink">{children}</td>,
 };
 
-const commandOf = (line: string) => {
-  const s = line.trim().replace(/^\$\s+/, '');
-  return s && !s.startsWith('#') ? s : null;
-};
-
-/** What each verdict means for someone about to paste the line into a terminal. */
-const VERDICT: Record<RiskTier, string> = {
-  read_only: 'read-only',
-  low: 'low risk',
-  medium: 'changes',
-  high: 'risky',
-  forbidden: 'never run',
-};
-
-/** One code line's height, shared by the code and the verdict column so they line up. */
-const ROW = 'h-5 leading-5';
+/** One suggested command: its explanation (from the # comments above it) and its lines. */
+interface CommandItem {
+  note: string;
+  /** As written, for display and copying (keeps \\ line continuations). */
+  text: string;
+  /** One line, for the risk engine. */
+  line: string;
+}
 
 /**
- * A shell block. In an advisory run each command is rated by the risk engine -- the
- * same verdict a live run would get -- since the reader is the one who will run it.
- * The verdicts sit in their own column beside the code, so a long command scrolls
- * under nothing and the labels never mix with what is to be copied.
+ * Read a shell block as a list of commands. A run of # comments explains the command
+ * that follows it; a line ending in \\ continues onto the next. A leading "CHANGES:"
+ * in a comment is dropped -- the verdict pill already says it.
+ */
+function parseCommands(text: string): { items: CommandItem[]; trailing: string } {
+  const items: CommandItem[] = [];
+  let note: string[] = [];
+  let cur: string[] = [];
+  const flush = () => {
+    if (!cur.length) return;
+    const text = cur.join('\n');
+    items.push({
+      note: note.join(' ').replace(/^(CHANGES|CHANGE|DESTRUCTIVE|WARNING)\s*:\s*/i, ''),
+      text,
+      line: cur.map((l) => l.replace(/\\\s*$/, '').trim()).join(' '),
+    });
+    cur = [];
+    note = [];
+  };
+  for (const raw of text.split('\n')) {
+    const t = raw.trim();
+    const continues = cur.length > 0 && /\\\s*$/.test(cur[cur.length - 1]!);
+    if (continues && t) {
+      cur.push(raw.replace(/^\s{0,2}/, '  '));
+    } else if (!t) {
+      flush();
+    } else if (t.startsWith('#')) {
+      flush();
+      note.push(t.replace(/^#+\s?/, ''));
+    } else {
+      flush();
+      cur.push(t.replace(/^\$\s+/, ''));
+    }
+  }
+  flush();
+  return { items, trailing: note.join(' ') };
+}
+
+type Verdict = { tier: RiskTier; reason: string; recognised: boolean };
+
+/**
+ * What a verdict means to someone about to paste the command, in the product's
+ * colours: green reads only, amber modifies state, red is high impact or prohibited.
+ */
+function verdictStyle(v: Verdict | undefined): { label: string; pill: string; edge: string; title: string } {
+  if (!v) return { label: '···', pill: 'border-hairline bg-tile-2 text-muted', edge: 'bg-hairline', title: 'Rating…' };
+  if (!v.recognised) {
+    return {
+      label: 'Unverified',
+      pill: 'border-edge bg-tile-2 text-muted',
+      edge: 'bg-dim',
+      title: 'The risk engine does not know this command, so a live run would ask before running it. Check what it does first.',
+    };
+  }
+  const by: Record<RiskTier, { label: string; pill: string; edge: string }> = {
+    read_only: { label: 'Read-only', pill: 'border-green/30 bg-green/10 text-green', edge: 'bg-green/70' },
+    low: { label: 'Low impact', pill: 'border-cyan/30 bg-cyan/10 text-cyan', edge: 'bg-cyan/70' },
+    medium: { label: 'Modifies state', pill: 'border-amber/35 bg-amber/10 text-amber', edge: 'bg-amber' },
+    high: { label: 'High impact', pill: 'border-red/40 bg-red/10 text-red', edge: 'bg-red' },
+    forbidden: { label: 'Prohibited', pill: 'border-red/60 bg-red/20 text-red', edge: 'bg-red' },
+  };
+  return { ...by[v.tier], title: v.reason };
+}
+
+function CopyButton({ text, label, className }: { text: string; label: string; className?: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        if (await copyText(text)) {
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1500);
+        }
+      }}
+      className={clsx('grid h-7 w-7 shrink-0 place-items-center rounded-md text-muted transition-colors hover:bg-white/5 hover:text-ink', className)}
+      title={copied ? 'Copied' : label}
+      aria-label={label}
+    >
+      {copied ? <Check size={13} className="text-green" /> : <Copy size={13} />}
+    </button>
+  );
+}
+
+/**
+ * A shell block. In an advisory run it is a list of commands the reader will run by
+ * hand, so each one is a row: its risk (rated by the same engine as a live run) and
+ * what it is for on top, the command below, wrapped rather than scrolled so nothing is
+ * ever hidden, and its own copy button. Elsewhere it stays a plain code block.
  */
 function ShellBlock({ text }: { text: string }) {
   const rate = useContext(RateCommands);
-  const [copied, setCopied] = useState(false);
-  const lines = text.split('\n');
-  const commands = lines.map(commandOf).filter((c): c is string => !!c);
+  const { items, trailing } = parseCommands(text);
   const ratings = useQuery({
-    queryKey: ['rate-commands', commands],
-    queryFn: () => post<Array<{ tier: RiskTier; reason: string; recognised: boolean }>>('/runs/rate-commands', { commands }),
-    enabled: rate && commands.length > 0,
+    queryKey: ['rate-commands', items.map((i) => i.line)],
+    queryFn: () => post<Verdict[]>('/runs/rate-commands', { commands: items.map((i) => i.line) }),
+    enabled: rate && items.length > 0,
     staleTime: Infinity,
   });
-  let k = 0;
-  const verdicts = lines.map((line) => (commandOf(line) && rate ? ratings.data?.[k++] : undefined));
+
+  if (!rate || !items.length) {
+    return (
+      <div className="group/sh relative">
+        <code className="block overflow-x-auto whitespace-pre rounded-lg border border-hairline bg-ground/70 px-3 py-2 pr-10 font-mono text-xs leading-relaxed text-ink">
+          {text}
+        </code>
+        <CopyButton text={text} label="Copy" className="absolute right-1.5 top-1.5 bg-ground/80 opacity-0 focus:opacity-100 group-hover/sh:opacity-100" />
+      </div>
+    );
+  }
 
   return (
-    <div className="group/sh flex overflow-hidden rounded-lg border border-hairline bg-ground/70">
-      <div className="relative min-w-0 flex-1">
-        <code className="block overflow-x-auto whitespace-pre px-3 py-2 pr-9 font-mono text-xs text-ink">
-          {lines.map((line, i) => (
-            <span key={i} className={clsx('block', ROW, !commandOf(line) && line.trim() && 'text-muted')}>{line || ' '}</span>
-          ))}
-        </code>
-        <button
-          type="button"
-          onClick={async () => {
-            if (await copyText(commands.join('\n') || text)) {
-              setCopied(true);
-              setTimeout(() => setCopied(false), 1500);
-            }
-          }}
-          className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded bg-ground/80 text-muted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/sh:opacity-100"
-          title="Copy the commands"
-          aria-label="Copy the commands"
-        >
-          {copied ? <Check size={12} /> : <Copy size={12} />}
-        </button>
-      </div>
-      {rate && commands.length > 0 && (
-        <div aria-label="Risk of each command" className="shrink-0 select-none border-l border-hairline bg-tile-2/40 px-2.5 py-2 text-right font-sans text-[10px] uppercase tracking-wide">
-          {verdicts.map((r, i) => (
-            <span
-              key={i}
-              className={clsx('block whitespace-nowrap', ROW, r ? (r.recognised ? TIER_STYLE[r.tier].text : 'text-muted') : '')}
-              title={r ? (r.recognised ? r.reason : 'The risk engine does not know this command, so a live run would ask before running it. Check what it does first.') : undefined}
-            >
-              {r ? (r.recognised ? VERDICT[r.tier] : 'unknown') : ' '}
-            </span>
-          ))}
-        </div>
-      )}
+    <div className="overflow-hidden rounded-xl border border-hairline bg-ground/60">
+      <ul className="divide-y divide-hairline">
+        {items.map((it, i) => {
+          const v = verdictStyle(ratings.data?.[i]);
+          return (
+            <li key={i} className="group/cmd relative flex gap-3 py-2.5 pl-4 pr-2">
+              <span aria-hidden className={clsx('absolute inset-y-0 left-0 w-[3px]', v.edge)} />
+              <div className="min-w-0 flex-1">
+                <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+                  <span title={v.title} className={clsx('mt-px inline-flex shrink-0 items-center rounded-full border px-2 py-px font-sans text-[10px] font-semibold uppercase leading-4 tracking-wide', v.pill)}>
+                    {v.label}
+                  </span>
+                  {it.note && <span className="min-w-0 basis-full font-sans text-xs leading-5 text-muted sm:flex-1 sm:basis-auto">{it.note}</span>}
+                </div>
+                <code className="mt-1.5 block whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-ink [overflow-wrap:anywhere]">
+                  {it.text}
+                </code>
+              </div>
+              <CopyButton text={it.text} label="Copy this command" className="opacity-60 group-hover/cmd:opacity-100 focus:opacity-100" />
+            </li>
+          );
+        })}
+      </ul>
+      {trailing && <p className="border-t border-hairline px-4 py-2 font-sans text-xs text-muted">{trailing}</p>}
     </div>
   );
 }
