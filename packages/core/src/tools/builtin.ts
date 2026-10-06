@@ -334,6 +334,9 @@ export function createDefaultRegistry(): ToolRegistry {
 /** Given to every run whose project has approved knowledge, whatever the agent's tool list. */
 export const KNOWLEDGE_TOOL_KEYS = ['search_knowledge', 'read_knowledge'];
 
+/** Read-only API tools for observability connections; advisory runs get these too. */
+export const OBSERVABILITY_TOOL_KEYS = ['query_metrics', 'query_logs', 'alerts'];
+
 export const BUILTIN_TOOL_KEYS = ['ssh_exec', 'ssh_read_file', 'k8s_kubectl', 'query_metrics', 'query_logs', 'alerts', 'record_finding', 'confirm_target'];
 
 /** The Console agent can also create files. */

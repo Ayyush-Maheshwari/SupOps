@@ -130,8 +130,9 @@ SupOps is organised around a few simple screens:
 |---|---|
 | 🔎 **Investigate** | Describe a symptom → the agent finds the root cause and proposes/does the fix. One-shot. |
 | 💬 **Console** | A back-and-forth assistant for everyday work ("how many pods are down on prod?"). You watch every command run live in the terminal panel. |
+| 📈 **Observability** | Alerts grouped into incidents, each with an evidence pack and an automatic read-only diagnosis; signals watched for what is unusual and what is about to run out. |
 | ❤️ **Health** | Antivirus-style scans of your fleet — **Quick** (fast essentials) or **Deep** (thorough AI investigation), run on demand or on a timer (15m–24h). Surfaces issues you can investigate in one click. |
-| 🔔 **Alerts** | Alerts picked up from Slack; start a triage run straight from one. |
+| 🔔 **Alerts** | Alerts from Slack and from Alertmanager, Prometheus or Grafana connections, each already diagnosed read-only; Investigate starts the fix, with approval for every change. |
 | ▶️ **Runs** | The full history of everything the agents did — each run's commands, outputs, risk, and outcome. Export a run as a shareable PDF/Markdown report. |
 | 🛡️ **Approvals** | The queue of risky actions waiting on a human, plus a record of **who approved what**. |
 | ⚙️ **Targets / Agents / Users / Settings** | Register servers, tune agents, manage teammate logins (admin only), and pick your model provider. |
@@ -185,6 +186,53 @@ dictates into the message box. Check the text, then send. It uses the browser's 
 recognition, which works in Chrome, Edge and Safari but not Firefox. Browsers only allow
 the microphone over HTTPS or on `localhost`. Chrome and Edge send the audio to Google or
 Microsoft to turn it into text, so leave it unused if that is not acceptable for you.
+
+---
+
+## 📈 Observability: incidents, evidence and predictions
+
+Connect **Prometheus**, **Grafana**, **Alertmanager**, **Loki** or **Elasticsearch** under
+**Targets → Add connection**. Everything SupOps does with them is read-only, and nothing has
+to be installed or configured on their side.
+
+- **Alerts come in by themselves.** SupOps reads firing alerts from an Alertmanager
+  connection every minute, and from Prometheus or Grafana-managed alerts when you switch
+  that on. An alert that stops firing is marked resolved. Alerts relayed through Slack
+  still work, and the same alert seen both ways is kept as one.
+- **Related alerts become one incident.** Alerts about the same machine, the same service,
+  the same alert on several machines, or the same namespace, arriving within 15 minutes,
+  are grouped, and the incident says why. You can merge or split incidents.
+- **Evidence first.** When an incident opens, a fixed set of read-only checks runs against
+  your metrics and logs, scoped to the incident's machine or namespace. It checks other
+  firing alerts, CPU, load, memory, disk and disks about to fill, OOM kills, restarts and
+  crash loops, CPU throttling, recent deploys, the 5xx rate against last week, how
+  unusual things are compared with yesterday, and error log lines grouped into patterns.
+  Checks whose metrics you do not collect are listed as not measured.
+- **Diagnosed as it arrives.** Every alert gets a read-only diagnosis automatically, the way
+  a health scan runs: nothing that needs approval can run in it. It begins from the evidence
+  and must cite it (`[E2]`), and "inconclusive" is an allowed answer. A citation to evidence
+  that does not exist is flagged. The alert and its incident show the root cause and
+  confidence while the alert stays **New** for you to decide.
+- **Investigate starts the fix.** Clicking **Investigate** on the alert or incident starts a
+  run that builds on that diagnosis instead of repeating it, proposes the fix, and waits for
+  your approval on every change. While the diagnosis is still running, Investigate opens it.
+  Limit automatic diagnosis by severity or runs per hour, or switch it off, in
+  **Settings → Observability**.
+- **Watched signals and predictions.** Every 5 minutes SupOps samples key signals it finds
+  on your metrics connection: CPU, memory, disk and inodes, load, network errors, pod
+  restarts, volumes, 5xx rate and latency, certificate expiry, and the monitoring stack
+  itself. You can add your own PromQL. Each series is compared with its own history,
+  including the same time on previous days, to spot what is unusual. Resources with a
+  limit are forecast ("Disk free on web-1 /var runs out in about 12h"). A forecast inside
+  24 hours opens an incident before any alert fires.
+- **Check the stack itself.** **Observability → Check the stack**, or **Investigate the
+  stack itself** in Investigate, checks that monitoring works: scrape targets, rule
+  evaluation, notification delivery, config reloads, storage and log ingestion.
+- **Runs keep their metrics.** A run limited to one machine still reads the metrics,
+  logs and alerts about it, and Advisory runs can read them too.
+
+Closed alerts and incidents, observations and metric samples are kept for 15 days (change it
+in **Settings → Observability**). Open ones are never removed.
 
 ---
 
@@ -316,7 +364,7 @@ what may run unattended — extend it alongside the rules.
 ✅ Durable agent loop with crash recovery · five-stage risk engine · approval suspend/resume with
 roles and a second-approver option · configurable autonomy per project and agent · SSH execution
 (with jump-host support) · Kubernetes cluster targets · Prometheus, Grafana, Loki, Elasticsearch
-and Alertmanager connections · encrypted credentials · live run streaming · health scans (quick &
+and Alertmanager connections · alert import, incident grouping, evidence packs and automatic read-only diagnosis · anomaly detection and resource forecasts · encrypted credentials · live run streaming · health scans (quick &
 deep, scheduled or manual) · knowledge base of runbooks, notes and facts · feedback and corrections
 on agent replies · automatic run-history clean-up · multiple user accounts · one-command Docker
 image · shareable PDF/Markdown run reports · installable web app.

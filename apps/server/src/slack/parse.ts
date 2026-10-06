@@ -63,7 +63,8 @@ function collectText(msg: SlackMessage): string {
   for (const a of msg.attachments ?? []) {
     if (a.title) parts.push(a.title);
     if (a.text) parts.push(a.text);
-    if (a.fallback) parts.push(a.fallback);
+    // The fallback is a plain-text copy of the rest; reading both doubles every label.
+    if (a.fallback && !a.text && !a.fields?.length) parts.push(a.fallback);
     for (const f of a.fields ?? []) {
       if (f.title || f.value) parts.push(`${f.title ?? ''} ${f.value ?? ''}`);
     }
@@ -86,15 +87,38 @@ const clean = (v: string): string => v.trim().replace(/^[`"']|[`"']$/g, '');
  * way the template was written.
  */
 function extractLabels(msg: SlackMessage, text: string): Record<string, string> {
-  const labels: Record<string, string> = {};
-  const put = (key: string, value: string) => {
+  return extractLabelBlocks(msg, text).merged;
+}
+
+/**
+ * Keys that identify one alert. When one of them repeats inside a message, the
+ * message is a grouped notification (`[FIRING:3] ...`) listing several alerts, and a
+ * new alert's labels start there.
+ */
+const IDENTITY_KEYS = new Set(['alertname', 'instance', 'host', 'hostname', 'node', 'pod']);
+
+/**
+ * Labels per alert in the message, plus every label merged (first value wins). A
+ * message about one alert has one block; a grouped notification has one per alert.
+ */
+function extractLabelBlocks(msg: SlackMessage, text: string): { blocks: Array<Record<string, string>>; merged: Record<string, string> } {
+  const merged: Record<string, string> = {};
+  const blocks: Array<Record<string, string>> = [{}];
+  const put = (key: string, value: string, split: boolean) => {
     const k = key.toLowerCase().trim();
     const v = clean(value);
-    if (k && v && !(k in labels)) labels[k] = v;
+    if (!k || !v) return;
+    if (!(k in merged)) merged[k] = v;
+    let cur = blocks[blocks.length - 1]!;
+    if (split && k in cur && cur[k] !== v && IDENTITY_KEYS.has(k)) {
+      cur = {};
+      blocks.push(cur);
+    }
+    if (!(k in cur)) cur[k] = v;
   };
 
   for (const a of msg.attachments ?? []) {
-    for (const f of a.fields ?? []) if (f.title && f.value) put(f.title, f.value);
+    for (const f of a.fields ?? []) if (f.title && f.value) put(f.title, f.value, false);
   }
   // Split on newlines AND bullet separators: many templates put every label on one
   // line as `… • *severity:* \`critical\` • *namespace:* \`x\``, so newline-splitting
@@ -108,9 +132,9 @@ function extractLabels(msg: SlackMessage, text: string): Record<string, string> 
       .replace(/^[^A-Za-z]+/, '') // any leading punctuation/space up to the first letter
       .trim();
     const m = stripped.match(line);
-    if (m) put(m[1]!, m[2]!);
+    if (m) put(m[1]!, m[2]!, true);
   }
-  return labels;
+  return { blocks: blocks.filter((b) => Object.keys(b).length), merged };
 }
 
 function firstMeaningfulLine(text: string): string {
@@ -121,16 +145,59 @@ function firstMeaningfulLine(text: string): string {
   return '';
 }
 
+/**
+ * Status from what Alertmanager's templates actually mark it with: the
+ * `[RESOLVED]`/`[FIRING:n]` tag, a `status` label, or the attachment colour. Never
+ * from the word "resolved" anywhere in the text -- "host could not be resolved" is a
+ * firing alert.
+ */
+function alertStatus(text: string, labels: Record<string, string>, colors: string[]): ParsedAlert['status'] {
+  if (/\[\s*resolved\b/i.test(text)) return 'resolved';
+  if (/\[\s*firing\b/i.test(text)) return 'firing';
+  const st = (labels.status ?? '').toLowerCase();
+  if (st === 'resolved') return 'resolved';
+  if (st === 'firing') return 'firing';
+  return colors.includes('good') ? 'resolved' : 'firing';
+}
+
+/**
+ * Every alert in a Slack message. Usually one; a grouped Alertmanager notification
+ * (`[FIRING:3] HighCPU`) lists several, and each becomes its own alert so each
+ * machine is matched and tracked separately.
+ */
+export function parseAlertmanagerMessages(msg: SlackMessage, channelId: string): ParsedAlert[] {
+  const base = parseAlertmanagerMessage(msg, channelId);
+  const text = collectText(msg);
+  const { blocks, merged } = extractLabelBlocks(msg, text);
+  const ident = (b: Record<string, string>) => [b.alertname ?? '', b.instance || b.host || b.node || b.hostname || '', b.pod ?? ''].join('|');
+  const distinct = new Map<string, Record<string, string>>();
+  for (const b of blocks) {
+    const full = { ...merged, ...b };
+    if (!distinct.has(ident(full))) distinct.set(ident(full), full);
+  }
+  if (distinct.size <= 1) return [base];
+  return [...distinct.values()].map((labels) => {
+    const title = labels.alertname || base.title;
+    const instance = labels.instance || labels.host || labels.node || labels.hostname || '';
+    const severity = SEVERITY_KEYS.map((k) => normalizeSeverity(labels[k])).find(Boolean) ?? base.severity;
+    return {
+      ...base,
+      title: title.slice(0, 200),
+      severity,
+      summary: (labels.summary || labels.description || base.summary || '').slice(0, 2000) || null,
+      labels: base.labels._link ? { ...labels, _link: base.labels._link } : labels,
+      fingerprint: createHash('sha256').update(`${title}|${instance}|${channelId}`).digest('hex').slice(0, 32),
+    };
+  });
+}
+
 export function parseAlertmanagerMessage(msg: SlackMessage, channelId: string): ParsedAlert {
   const text = collectText(msg);
   const lower = text.toLowerCase();
   const colors = (msg.attachments ?? []).map((a) => (a.color ?? '').toLowerCase());
   const labels = extractLabels(msg, text);
 
-  const status: ParsedAlert['status'] =
-    lower.includes('[resolved]') || lower.includes('resolved') || colors.includes('good')
-      ? 'resolved'
-      : 'firing';
+  const status = alertStatus(text, labels, colors);
 
   // Severity, most reliable source first:
   //  1. a known label key (severity/alert/level/priority/...), value normalised;

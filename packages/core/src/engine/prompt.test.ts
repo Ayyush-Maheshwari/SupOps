@@ -22,3 +22,11 @@ test('advisory runs with network checks are told what net_check is and where it 
   const opening = buildOpeningMessage({ projectName: 'p', targets: [], task: 't', advisory: true, networkChecks: true });
   assert.match(opening, /net_check/);
 });
+
+test('incident runs: diagnosis and fix get their own instructions', () => {
+  const d = buildSystemPrompt(null, 'agent', { incident: 'diagnose' });
+  assert.ok(d.includes('INCIDENT INVESTIGATION') && !d.includes('INCIDENT -- FIX'));
+  const f = buildSystemPrompt(null, 'agent', { incident: 'fix' });
+  assert.ok(f.includes('INCIDENT -- FIX') && !f.includes('INCIDENT INVESTIGATION'));
+  assert.ok(!buildSystemPrompt(null, 'agent').includes('INCIDENT'));
+});

@@ -6,6 +6,7 @@ import {
   Bell, BookOpen, ChevronDown, Download, ChevronLeft, ChevronRight, ChevronsUpDown, HeartPulse, LayoutDashboard, LogOut, Play, Plus, Server, Settings as SettingsIcon, ShieldCheck, Sparkles, Terminal, TerminalSquare, Users as UsersIcon,
 } from 'lucide-react';
 import { useInstall } from '../lib/pwa';
+import { ObservabilityIcon } from './icons/ObservabilityIcon';
 import { Lockup } from './Logo';
 import { NewProjectDialog } from './NewProjectDialog';
 import { api } from '../lib/api';
@@ -18,7 +19,7 @@ interface NavItem {
   icon: typeof LayoutDashboard;
   end?: boolean;
   /** Key into the live badge counts, for items that should show a pending total. */
-  badge?: 'approvals' | 'alerts' | 'health';
+  badge?: 'approvals' | 'alerts' | 'health' | 'incidents';
   /** Only shown to owner/admin accounts. */
   adminOnly?: boolean;
 }
@@ -35,6 +36,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
   {
     label: 'Operations',
     items: [
+      { to: '/observability', label: 'Observability', icon: ObservabilityIcon, badge: 'incidents' },
       { to: '/health', label: 'Health', icon: HeartPulse, badge: 'health' },
       { to: '/alerts', label: 'Alerts', icon: Bell, badge: 'alerts' },
       { to: '/runs', label: 'Runs', icon: Play },
@@ -105,7 +107,15 @@ export function Layout() {
     refetchInterval: 5000,
   });
 
+  const incidentCount = useQuery({
+    queryKey: ['incidentCount', projectId],
+    queryFn: () => api<{ open: number }>(`/observability/count?projectId=${projectId}`),
+    enabled: !!projectId,
+    refetchInterval: 10_000,
+  });
+
   const badges = {
+    incidents: incidentCount.data?.open ?? 0,
     approvals: approvals.data?.length ?? 0,
     alerts: alertCount.data?.new ?? 0,
     health: healthCount.data?.open ?? 0,

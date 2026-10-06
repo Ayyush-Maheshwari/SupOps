@@ -9,6 +9,7 @@ import { PageHeader } from '../components/Layout';
 import { Field, Panel, Spinner } from '../components/ui';
 import { SlackPanel } from '../components/SlackPanel';
 import { StoragePanel } from '../components/StoragePanel';
+import { ObservabilityPanel } from '../components/ObservabilityPanel';
 import { AutonomyPanel } from '../components/AutonomyPanel';
 import type { Project } from '../lib/types';
 
@@ -289,6 +290,8 @@ export function Settings() {
         {projectId && <SlackPanel projectId={projectId} />}
 
         {project && <AutonomyPanel project={project} canEdit={canDelete} />}
+
+        <ObservabilityPanel canEdit={canDelete} />
 
         <StoragePanel canEdit={canDelete} />
 

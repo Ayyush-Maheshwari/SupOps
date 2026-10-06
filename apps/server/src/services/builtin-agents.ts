@@ -1,15 +1,17 @@
 import { and, eq } from 'drizzle-orm';
-import { DEFAULT_RUN_BUDGET, agents } from '@supops/db';
+import { DEFAULT_RUN_BUDGET, agents, projects } from '@supops/db';
 import { BUILTIN_TOOL_KEYS, CONSOLE_TOOL_KEYS } from '@supops/core';
 import { db } from '../context.ts';
+import { HEALTH_AGENT_SPECS, ensureScanAgent } from './health.ts';
 
 /**
  * The agents every project ships with. One definition, used when seeding, when a
  * project is created, and (later) when an admin resets an agent to its default --
  * it used to be copied in two places, which is how copies drift.
  *
- * The health-check agents are not here: they are created and kept in sync from
- * HEALTH_AGENT_SPECS (services/health.ts) the first time a scan runs.
+ * The health-check agents are defined in HEALTH_AGENT_SPECS (services/health.ts),
+ * next to the scan that uses them, and created here with the rest so they show on
+ * the Agents page before the first scan.
  */
 export const BUILTIN_AGENTS = [
   {
@@ -61,5 +63,20 @@ export function ensureBuiltinAgents(projectId: string): string[] {
       .run();
     created.push(a.slug);
   }
+  // The health agents: created if missing, and their prompts kept in sync with the spec.
+  for (const type of ['quick', 'deep'] as const) {
+    const { slug } = HEALTH_AGENT_SPECS[type];
+    const existed = !!db.select({ id: agents.id }).from(agents).where(and(eq(agents.projectId, projectId), eq(agents.slug, slug))).get();
+    ensureScanAgent(projectId, type);
+    if (!existed) created.push(slug);
+  }
   return created;
+}
+
+/** Every project gets its missing built-in agents (e.g. after an upgrade adds one). */
+export function ensureBuiltinAgentsEverywhere(): void {
+  for (const p of db.select({ id: projects.id }).from(projects).all()) {
+    const created = ensureBuiltinAgents(p.id);
+    if (created.length) console.log(`  agents: added ${created.join(', ')} to project ${p.id}`);
+  }
 }

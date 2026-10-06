@@ -95,8 +95,12 @@ export type RunTrigger = (typeof RUN_TRIGGERS)[number];
 export const ROLES = ['owner', 'admin', 'operator', 'approver', 'viewer'] as const;
 export type Role = (typeof ROLES)[number];
 
-/** Where an alert came from. Slack is built now; the rest leave room for later. */
-export const ALERT_SOURCES = ['slack', 'prometheus', 'grafana'] as const;
+/**
+ * Where an alert came from: a Slack message, read from a connection (Alertmanager,
+ * Prometheus rules, Grafana-managed alerts), or raised by SupOps itself from a
+ * forecast or anomaly.
+ */
+export const ALERT_SOURCES = ['slack', 'alertmanager', 'prometheus', 'grafana', 'supops'] as const;
 export type AlertSource = (typeof ALERT_SOURCES)[number];
 
 /**
@@ -111,6 +115,18 @@ export type AlertStatus = (typeof ALERT_STATUSES)[number];
 /** `unknown` when the source message carried no severity we could read. */
 export const ALERT_SEVERITIES = ['critical', 'warning', 'info', 'unknown'] as const;
 export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
+
+/** An incident groups related alerts (and predictions) into one problem. */
+export const INCIDENT_STATUSES = ['open', 'resolved'] as const;
+export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
+
+/** How far the automatic triage of an incident got. */
+export const TRIAGE_STATES = ['none', 'evidence', 'running', 'done', 'skipped', 'failed'] as const;
+export type TriageState = (typeof TRIAGE_STATES)[number];
+
+/** What an evidence check found. */
+export const EVIDENCE_STATUSES = ['interesting', 'normal', 'unavailable', 'error'] as const;
+export type EvidenceStatus = (typeof EVIDENCE_STATUSES)[number];
 
 /** An open alert can still be acted on or updated by a repeat/resolved notification. */
 export const OPEN_ALERT_STATUSES: readonly AlertStatus[] = ['new', 'investigating'];

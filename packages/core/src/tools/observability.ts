@@ -4,6 +4,7 @@ import type { ObservabilityAuth, ObservabilityConfig } from '@supops/db';
 import type { ExecContext, ResolvedTarget, ToolDef } from './types.ts';
 import { errOutput, okOutput, truncateOutput } from './output.ts';
 import { safeGet } from './executors/http.ts';
+import { forecastLimit, formatEta, project } from '../observe/forecast.ts';
 
 /**
  * Read-only query tools for observability backends: metrics (Prometheus), logs
@@ -57,10 +58,31 @@ export function timeWindow(start: string | undefined, end: string | undefined, d
   return { start: s, end: e };
 }
 
-async function call(ctx: ExecContext, path: string, query: Record<string, string | number | undefined>, jsonBody?: unknown, method?: 'GET' | 'POST' | 'DELETE' | 'PUT'): Promise<CallResult> {
-  const cfg = obsConfig(ctx.target);
+export interface ObsRequestOptions {
+  query?: Record<string, string | number | undefined>;
+  jsonBody?: unknown;
+  method?: 'GET' | 'POST' | 'DELETE' | 'PUT';
+  timeoutMs?: number;
+  signal?: AbortSignal;
+  maxBytes?: number;
+  /**
+   * Grafana: send the path as is instead of through the Prometheus datasource proxy
+   * (for Grafana's own APIs, such as its built-in Alertmanager).
+   */
+  direct?: boolean;
+}
+
+export type ObsResult = { error: string } | { json: unknown; truncated: boolean };
+
+/**
+ * One request to an observability connection: its base URL, auth and network rules,
+ * a fixed path, and a JSON answer. Shared by the agent's tools, alert import, the
+ * evidence checks and the watcher, so all of them obey the same guard.
+ */
+export async function obsRequest(target: ResolvedTarget, path: string, opts: ObsRequestOptions = {}): Promise<ObsResult> {
+  const cfg = obsConfig(target);
   // Grafana: Prometheus API paths go through the datasource proxy for one datasource.
-  if (cfg.kind === 'grafana') {
+  if (cfg.kind === 'grafana' && !opts.direct) {
     if (!cfg.datasourceUid || !/^[A-Za-z0-9_-]+$/.test(cfg.datasourceUid)) return { error: 'this Grafana connection has no valid Prometheus datasource uid' };
     path = `/api/datasources/proxy/uid/${cfg.datasourceUid}${path}`;
   }
@@ -68,15 +90,15 @@ async function call(ctx: ExecContext, path: string, query: Record<string, string
     const r = await safeGet({
       baseUrl: cfg.baseUrl,
       path,
-      query,
-      headers: authHeaders(ctx.target),
+      query: opts.query ?? {},
+      headers: authHeaders(target),
       allowPrivateNetwork: cfg.allowPrivateNetwork,
       insecureSkipVerify: cfg.insecureSkipVerify,
-      timeoutMs: ctx.timeoutMs,
-      maxBytes: 4 * 1024 * 1024,
-      signal: ctx.signal,
-      jsonBody,
-      ...(method ? { method } : {}),
+      timeoutMs: opts.timeoutMs ?? 20_000,
+      maxBytes: opts.maxBytes ?? 4 * 1024 * 1024,
+      signal: opts.signal,
+      jsonBody: opts.jsonBody,
+      ...(opts.method ? { method: opts.method } : {}),
     });
     if (r.status >= 400) return { error: `HTTP ${r.status}: ${r.body.slice(0, 500)}` };
     try {
@@ -87,6 +109,10 @@ async function call(ctx: ExecContext, path: string, query: Record<string, string
   } catch (err) {
     return { error: err instanceof Error ? err.message : String(err) };
   }
+}
+
+function call(ctx: ExecContext, path: string, query: Record<string, string | number | undefined>, jsonBody?: unknown, method?: 'GET' | 'POST' | 'DELETE' | 'PUT'): Promise<CallResult> {
+  return obsRequest(ctx.target, path, { query, jsonBody, method, timeoutMs: ctx.timeoutMs, signal: ctx.signal });
 }
 
 const done = (ctx: ExecContext, text: string) => {
@@ -127,8 +153,11 @@ export function condensePrometheus(data: { resultType?: string; result?: unknown
 
 const metricsArgs = z.object({
   target: z.string(),
-  operation: z.enum(['instant', 'range', 'series', 'labels', 'label_values', 'targets', 'rules', 'alerts']),
+  operation: z.enum(['instant', 'range', 'series', 'labels', 'label_values', 'targets', 'rules', 'alerts', 'forecast', 'baseline', 'status']),
   query: z.string().max(2000).optional(),
+  limit_value: z.number().optional(),
+  limit_when: z.enum(['below', 'above']).optional(),
+  horizon: z.string().max(10).regex(/^\d+[mhd]$/).optional(),
   label: z.string().max(200).regex(/^[A-Za-z_][A-Za-z0-9_]*$/).optional(),
   start: z.string().max(40).optional(),
   end: z.string().max(40).optional(),
@@ -142,11 +171,18 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
   description:
     'Query a Prometheus-compatible metrics backend (read-only). operation: instant (PromQL at a time), ' +
     'range (PromQL over start..end; result is summarised per series as first/last/min/max), series, labels, ' +
-    'label_values (needs label), targets (scrape health), rules, alerts (firing/pending). Times accept ' +
+    'label_values (needs label), targets (scrape health), rules, alerts (firing/pending), ' +
+    'forecast (fit the last 24h of a PromQL query and say where each series is heading: with limit_value and limit_when, ' +
+    'when it reaches that limit, e.g. disk free bytes below 0; otherwise its value after horizon, default 24h), ' +
+    'baseline (each series now vs 1 day and 1 week ago, and how unusual it is against the last day), ' +
+    'status (is this Prometheus itself healthy: version, config reload, storage, series count, scrape targets). Times accept ' +
     '"now", "now-1h", RFC3339 or unix seconds. Prefer rate()/increase() over raw counters and aggregate with sum by (...).',
   parameters: {
-    operation: { type: 'string', enum: ['instant', 'range', 'series', 'labels', 'label_values', 'targets', 'rules', 'alerts'], description: 'What to fetch.' },
-    query: { type: 'string', description: 'PromQL (instant/range), or a series selector (series).' },
+    operation: { type: 'string', enum: ['instant', 'range', 'series', 'labels', 'label_values', 'targets', 'rules', 'alerts', 'forecast', 'baseline', 'status'], description: 'What to fetch.' },
+    query: { type: 'string', description: 'PromQL (instant/range/forecast/baseline), or a series selector (series).' },
+    limit_value: { type: 'number', description: 'forecast: the value at which the resource runs out (e.g. 0 bytes free, 100 percent).' },
+    limit_when: { type: 'string', enum: ['below', 'above'], description: 'forecast: runs out when the series falls below or rises above limit_value.' },
+    horizon: { type: 'string', description: 'forecast without a limit: how far ahead, e.g. 24h or 7d (default 24h).' },
     label: { type: 'string', description: 'Label name for label_values.' },
     start: { type: 'string', description: 'Range start, default now-1h.' },
     end: { type: 'string', description: 'Range end, default now.' },
@@ -159,7 +195,9 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
   targetKinds: ['prometheus', 'grafana'],
   mutating: false,
   timeoutMs: 30_000,
-  render: (a, t) => `[${t.slug}] ${a.operation}${a.query ? ` ${a.query}` : ''}${a.label ? ` ${a.label}` : ''}${a.operation === 'range' ? ` · ${a.start ?? 'now-1h'} → ${a.end ?? 'now'}` : ''}`,
+  render: (a, t) =>
+    `[${t.slug}] ${a.operation}${a.query ? ` ${a.query}` : ''}${a.label ? ` ${a.label}` : ''}${a.operation === 'range' ? ` · ${a.start ?? 'now-1h'} → ${a.end ?? 'now'}` : ''}` +
+    `${a.operation === 'forecast' ? (a.limit_value !== undefined ? ` · until ${a.limit_when ?? 'below'} ${a.limit_value}` : ` · ${a.horizon ?? '24h'} ahead`) : ''}`,
   classifyArgs: () => READ,
   execute: async (a, ctx) => {
     const cfg = obsConfig(ctx.target);
@@ -168,6 +206,10 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
       return errOutput(`operation "${a.operation}" needs a query`);
     }
     if (a.operation === 'label_values' && !a.label) return errOutput('label_values needs a label');
+    if ((a.operation === 'forecast' || a.operation === 'baseline') && !a.query) return errOutput(`operation "${a.operation}" needs a query`);
+    if (a.operation === 'forecast') return done(ctx, await forecastOp(ctx, a.query!, a, limit));
+    if (a.operation === 'baseline') return done(ctx, await baselineOp(ctx, a.query!, limit));
+    if (a.operation === 'status') return done(ctx, await prometheusStatus(ctx));
 
     if (a.operation === 'range') {
       const w = timeWindow(a.start, a.end, 'now-1h', cfg.maxRangeHours ?? 168);
@@ -203,11 +245,123 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
   },
 };
 
+
+// ---- forecast / baseline / status ----------------------------------------------
+
+const HORIZON_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
+
+async function forecastOp(
+  ctx: ExecContext,
+  query: string,
+  a: { limit_value?: number; limit_when?: 'below' | 'above'; horizon?: string },
+  limit: number,
+): Promise<string> {
+  const end = Date.now();
+  const r = await call(ctx, '/api/v1/query_range', { query, start: (end - 24 * 3.6e6) / 1000, end: end / 1000, step: '300s' });
+  if ('error' in r) return `ERROR: ${r.error}`;
+  const rows = ((r.json as { data?: { result?: Array<{ metric: Record<string, string>; values: Array<[number, string]> }> } }).data?.result ?? []);
+  if (!rows.length) return '(no series matched)';
+  const out: string[] = [];
+  for (const row of rows.slice(0, limit)) {
+    const pts = row.values.map(([t, v]) => ({ at: t * 1000, value: Number(v) })).filter((p) => Number.isFinite(p.value));
+    const name = `${row.metric.__name__ ?? ''}${labelsOf(row.metric)}`;
+    if (a.limit_value !== undefined) {
+      const f = forecastLimit(pts, { value: a.limit_value, when: a.limit_when ?? 'below' }, end);
+      if (!f) { out.push(`${name}: not enough history to forecast`); continue; }
+      out.push(
+        `${name}: now ${num(String(f.current))}, ${f.slopePerHour >= 0 ? '+' : ''}${num(String(f.slopePerHour))}/h over the last ${f.windowHours}h; ` +
+          (f.etaMs === null ? 'not heading towards the limit' : f.etaMs === 0 ? 'already past the limit' : `reaches ${a.limit_value} in about ${formatEta(f.etaMs)}`) +
+          ` (confidence ${f.confidence}, r2 ${f.r2})`,
+      );
+    } else {
+      const h = a.horizon ?? '24h';
+      const p = project(pts, Number(h.slice(0, -1)) * HORIZON_MS[h.slice(-1)]!, end);
+      if (!p) { out.push(`${name}: not enough history to forecast`); continue; }
+      out.push(`${name}: now ${num(String(pts[pts.length - 1]?.value ?? NaN))}, in ${h} about ${num(String(p.value))} (${p.slopePerHour >= 0 ? '+' : ''}${num(String(p.slopePerHour))}/h, r2 ${p.r2.toFixed(2)})`);
+    }
+  }
+  if (rows.length > limit) out.push(`... ${rows.length - limit} more series`);
+  return out.join('\n');
+}
+
+async function baselineOp(ctx: ExecContext, query: string, limit: number): Promise<string> {
+  const q = async (expr: string) => {
+    const r = await call(ctx, '/api/v1/query', { query: expr });
+    if ('error' in r) return { error: r.error };
+    const rows = ((r.json as { data?: { result?: Array<{ metric: Record<string, string>; value: [number, string] }> } }).data?.result ?? []);
+    return { map: new Map(rows.map((x) => [labelsOf(x.metric), Number(x.value[1])])), names: rows.map((x) => `${x.metric.__name__ ?? ''}${labelsOf(x.metric)}`), keys: rows.map((x) => labelsOf(x.metric)) };
+  };
+  const [now, day, week, avg, sd] = await Promise.all([
+    q(query),
+    q(`(${query}) offset 1d`),
+    q(`(${query}) offset 1w`),
+    q(`avg_over_time((${query})[1d:5m])`),
+    q(`stddev_over_time((${query})[1d:5m])`),
+  ]);
+  if ('error' in now) return `ERROR: ${now.error}`;
+  if (!now.keys.length) return '(no series matched)';
+  const get = (r: Awaited<ReturnType<typeof q>>, k: string) => r.map?.get(k);
+  const lines = now.keys.slice(0, limit).map((k, i) => {
+    const v = get(now, k)!;
+    const d = get(day, k);
+    const w = get(week, k);
+    const m = get(avg, k);
+    const s = get(sd, k);
+    const z = m !== undefined && s ? (v - m) / s : undefined;
+    return `${now.names[i]}: now ${num(String(v))}` +
+      `${d !== undefined ? `, 1d ago ${num(String(d))}` : ''}${w !== undefined ? `, 1w ago ${num(String(w))}` : ''}` +
+      `${m !== undefined ? `, 24h average ${num(String(m))}` : ''}${z !== undefined ? ` (${z >= 0 ? '+' : ''}${z.toFixed(1)} standard deviations${Math.abs(z) >= 3 ? ', unusual' : ''})` : ''}`;
+  });
+  if (now.keys.length > limit) lines.push(`... ${now.keys.length - limit} more series`);
+  return lines.join('\n');
+}
+
+async function prometheusStatus(ctx: ExecContext): Promise<string> {
+  const cfg = obsConfig(ctx.target);
+  const out: string[] = [];
+  if (cfg.kind === 'grafana') {
+    const h = await obsRequest(ctx.target, '/api/health', { direct: true, timeoutMs: ctx.timeoutMs, signal: ctx.signal });
+    out.push('error' in h ? `Grafana health: ERROR ${h.error}` : `Grafana: ${JSON.stringify(h.json)}`);
+  }
+  const [build, runtime, tsdb, targets] = await Promise.all([
+    call(ctx, '/api/v1/status/buildinfo', {}),
+    call(ctx, '/api/v1/status/runtimeinfo', {}),
+    call(ctx, '/api/v1/status/tsdb', {}),
+    call(ctx, '/api/v1/targets', { state: 'active' }),
+  ]);
+  if ('error' in build) out.push(`buildinfo: ERROR ${build.error}`);
+  else {
+    const b = (build.json as { data?: { version?: string } }).data;
+    out.push(`Version: ${b?.version ?? 'unknown'}`);
+  }
+  if (!('error' in runtime)) {
+    const rt = (runtime.json as { data?: Record<string, unknown> }).data ?? {};
+    out.push(
+      `Config reload: ${rt.reloadConfigSuccess === false ? 'FAILED (running an old configuration)' : 'ok'}${rt.lastConfigTime ? ` (last ${rt.lastConfigTime})` : ''}; ` +
+        `started ${rt.startTime ?? '?'}; storage retention ${rt.storageRetention ?? '?'}; goroutines ${rt.goroutineCount ?? '?'}`,
+    );
+  }
+  if (!('error' in tsdb)) {
+    const d = (tsdb.json as { data?: { headStats?: { numSeries?: number; numLabelPairs?: number; chunkCount?: number }; seriesCountByMetricName?: Array<{ name: string; value: number }> } }).data;
+    if (d?.headStats) out.push(`Active series: ${d.headStats.numSeries ?? '?'}; chunks ${d.headStats.chunkCount ?? '?'}`);
+    if (d?.seriesCountByMetricName?.length) out.push(`Most series by metric: ${d.seriesCountByMetricName.slice(0, 10).map((m) => `${m.name} ${m.value}`).join(', ')}`);
+  }
+  if (!('error' in targets)) {
+    const ts = ((targets.json as { data?: { activeTargets?: Array<{ labels: Record<string, string>; health: string; lastError?: string; lastScrapeDuration?: number }> } }).data?.activeTargets ?? []);
+    const down = ts.filter((t) => t.health !== 'up');
+    const slow = ts.filter((t) => (t.lastScrapeDuration ?? 0) > 10);
+    out.push(`Scrape targets: ${ts.length}, ${down.length} not up${slow.length ? `, ${slow.length} slower than 10s` : ''}`);
+    for (const t of down.slice(0, 10)) out.push(`  down: ${labelsOf(t.labels)}${t.lastError ? ` -- ${t.lastError}` : ''}`);
+  }
+  return out.join('\n');
+}
+
 // ---- query_logs ----------------------------------------------------------------
 
 const logsArgs = z.object({
   target: z.string(),
-  query: z.string().min(1).max(2000),
+  operation: z.enum(['search', 'status']).optional(),
+  query: z.string().max(2000).optional(),
   index: z.string().max(200).optional(),
   start: z.string().max(40).optional(),
   end: z.string().max(40).optional(),
@@ -220,30 +374,66 @@ export function indexAllowed(index: string, patterns: string[] | undefined): boo
   return patterns.some((p) => new RegExp(`^${p.split('*').map((s) => s.replace(/[.+?^${}()|[\]\\]/g, '\\$&')).join('.*')}$`).test(index));
 }
 
+
+async function logsStatus(ctx: ExecContext): Promise<string> {
+  const cfg = obsConfig(ctx.target);
+  if (cfg.kind === 'loki') {
+    const [build, labels] = await Promise.all([call(ctx, '/loki/api/v1/status/buildinfo', {}), call(ctx, '/loki/api/v1/labels', {})]);
+    const out: string[] = [];
+    out.push('error' in build ? `Loki: ERROR ${build.error}` : `Loki version: ${(build.json as { version?: string }).version ?? 'unknown'}`);
+    out.push('error' in labels ? `Labels: ERROR ${labels.error}` : `Ready; ${((labels.json as { data?: string[] }).data ?? []).length} labels in the last hour`);
+    return out.join('\n');
+  }
+  const [health, indices] = await Promise.all([
+    call(ctx, '/_cluster/health', {}),
+    call(ctx, '/_cat/indices', { format: 'json', h: 'index,health,status,docs.count,store.size', s: 'store.size:desc', bytes: 'b' }),
+  ]);
+  const out: string[] = [];
+  if ('error' in health) out.push(`Cluster health: ERROR ${health.error}`);
+  else {
+    const h = health.json as Record<string, unknown>;
+    out.push(`Cluster ${h.cluster_name ?? ''}: ${h.status}; nodes ${h.number_of_nodes}; unassigned shards ${h.unassigned_shards}; pending tasks ${h.number_of_pending_tasks}`);
+  }
+  if (!('error' in indices) && Array.isArray(indices.json)) {
+    const list = (indices.json as Array<Record<string, string>>).filter((i) => indexAllowed(i.index ?? '', cfg.indices));
+    const bad = list.filter((i) => i.health !== 'green');
+    out.push(`Indices: ${list.length}${bad.length ? `, ${bad.length} not green: ${bad.slice(0, 10).map((i) => `${i.index} (${i.health})`).join(', ')}` : ', all green'}`);
+    out.push(`Largest: ${list.slice(0, 5).map((i) => `${i.index} ${Math.round(Number(i['store.size'] ?? 0) / 1e6)} MB`).join(', ')}`);
+  }
+  return out.join('\n');
+}
+
 export const queryLogsTool: ToolDef<z.infer<typeof logsArgs>> = {
   key: 'query_logs',
   kind: 'http',
   description:
     'Search logs (read-only). Loki: query is LogQL, e.g. {app="api"} |= "error". Elasticsearch/OpenSearch: ' +
     'query is Lucene query_string syntax, e.g. level:error AND service:api, and index names the index pattern. ' +
-    'Default window is the last 15 minutes; newest lines first; at most 500 lines.',
+    'Default window is the last 15 minutes; newest lines first; at most 500 lines. ' +
+    'operation status (no query) checks the log backend itself: Loki readiness and version, or Elasticsearch cluster health and red/yellow indices.',
   parameters: {
-    query: { type: 'string', description: 'LogQL (Loki) or query_string (Elasticsearch).' },
+    operation: { type: 'string', enum: ['search', 'status'], description: 'search (default) or status.' },
+    query: { type: 'string', description: 'LogQL (Loki) or query_string (Elasticsearch). Required for search.' },
     index: { type: 'string', description: 'Elasticsearch index or pattern, e.g. logs-*.' },
     start: { type: 'string', description: 'Default now-15m.' },
     end: { type: 'string', description: 'Default now.' },
     limit: { type: 'integer', description: 'Most lines (default 100, max 500).' },
   },
-  required: ['query'],
+  required: [],
   argsSchema: logsArgs,
   baselineRisk: 'read_only',
   targetKinds: ['loki', 'elasticsearch'],
   mutating: false,
   timeoutMs: 30_000,
-  render: (a, t) => `[${t.slug}] ${a.index ? `${a.index}: ` : ''}${a.query} · ${a.start ?? 'now-15m'} → ${a.end ?? 'now'} · limit ${a.limit ?? 100}`,
+  render: (a, t) =>
+    a.operation === 'status'
+      ? `[${t.slug}] status`
+      : `[${t.slug}] ${a.index ? `${a.index}: ` : ''}${a.query ?? ''} · ${a.start ?? 'now-15m'} → ${a.end ?? 'now'} · limit ${a.limit ?? 100}`,
   classifyArgs: () => READ,
   execute: async (a, ctx) => {
     const cfg = obsConfig(ctx.target);
+    if (a.operation === 'status') return done(ctx, await logsStatus(ctx));
+    if (!a.query) return errOutput('search needs a query');
     const w = timeWindow(a.start, a.end, 'now-15m', cfg.maxRangeHours ?? 24);
     if ('error' in w) return errOutput(w.error);
     const limit = a.limit ?? 100;
@@ -291,7 +481,7 @@ export const queryLogsTool: ToolDef<z.infer<typeof logsArgs>> = {
 
 const alertsArgs = z.object({
   target: z.string(),
-  operation: z.enum(['list_alerts', 'list_silences', 'create_silence', 'expire_silence']),
+  operation: z.enum(['list_alerts', 'list_silences', 'create_silence', 'expire_silence', 'status']),
   filter: z.string().max(500).optional(),
   /** create_silence: matchers like 'alertname="DiskFull",instance="db1"'. */
   matchers: z.string().max(1000).optional(),
@@ -343,11 +533,12 @@ export const alertsTool: ToolDef<z.infer<typeof alertsArgs>> = {
   key: 'alerts',
   kind: 'http',
   description:
-    'Alertmanager. Read: list_alerts (active alerts), list_silences. Change (needs approval): ' +
+    'Alertmanager. Read: list_alerts (active alerts), list_silences, status (is Alertmanager itself healthy: ' +
+    'version, cluster peers, uptime, configuration). Change (needs approval): ' +
     'create_silence (mute alerts matching `matchers` for `duration`, with a `comment`), expire_silence ' +
     '(end one by silence_id). Matchers look like alertname="DiskFull",instance="db1".',
   parameters: {
-    operation: { type: 'string', enum: ['list_alerts', 'list_silences', 'create_silence', 'expire_silence'], description: 'What to do.' },
+    operation: { type: 'string', enum: ['list_alerts', 'list_silences', 'create_silence', 'expire_silence', 'status'], description: 'What to do.' },
     filter: { type: 'string', description: 'List filter, e.g. severity="critical".' },
     matchers: { type: 'string', description: 'create_silence: which alerts to mute, e.g. alertname="DiskFull",instance="db1".' },
     duration: { type: 'string', description: 'create_silence: how long, e.g. 2h (max 24h).' },
@@ -369,6 +560,17 @@ export const alertsTool: ToolDef<z.infer<typeof alertsArgs>> = {
   classifyArgs: (a) => classifySilence(a),
   execute: async (a, ctx) => {
     const filter = a.filter ? { filter: a.filter } : {};
+    if (a.operation === 'status') {
+      const r = await call(ctx, '/api/v2/status', {});
+      if ('error' in r) return errOutput(r.error);
+      const st = r.json as { versionInfo?: { version?: string }; uptime?: string; cluster?: { status?: string; peers?: Array<{ name: string }> }; config?: { original?: string } };
+      const receivers = (st.config?.original?.match(/^\s*-\s*name:\s*['"]?([^'"\n]+)/gm) ?? []).map((l) => l.replace(/^\s*-\s*name:\s*['"]?/, '').trim());
+      return done(ctx, [
+        `Alertmanager ${st.versionInfo?.version ?? ''}, up since ${st.uptime ?? '?'}`,
+        `Cluster: ${st.cluster?.status ?? 'unknown'}, ${st.cluster?.peers?.length ?? 0} peer(s)`,
+        receivers.length ? `Receivers: ${receivers.slice(0, 15).join(', ')}` : 'Receivers: not shown',
+      ].join('\n'));
+    }
     if (a.operation === 'list_alerts') {
       const r = await call(ctx, '/api/v2/alerts', { active: 'true', ...filter });
       if ('error' in r) return errOutput(r.error);

@@ -5,3 +5,4 @@ export * from './conversation.ts';
 export * from './mermaid.ts';
 export * from './output.ts';
 export * from './autonomy.ts';
+export * from './metrics.ts';

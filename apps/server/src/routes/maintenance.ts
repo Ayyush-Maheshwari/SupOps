@@ -1,8 +1,8 @@
 import { Router } from 'express';
 import { sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { runAttachments, runs, runSteps, toolCalls } from '@supops/db';
-import { storageStats } from '@supops/core';
+import { alerts, incidents, metricPoints, runAttachments, runs, runSteps, toolCalls } from '@supops/db';
+import { previewObservabilityCleanup, storageStats } from '@supops/core';
 import { isAdmin } from '../auth.ts';
 import { config } from '../config.ts';
 import { db, settingsStore, sqlite } from '../context.ts';
@@ -31,11 +31,17 @@ maintenanceRoutes.get('/storage', (_req, res) => {
     images: att?.n ?? 0,
     imageBytes: att?.b ?? 0,
     retention: settingsStore.retention(),
+    observability: {
+      metricPoints: db.select({ n: sql<number>`count(*)` }).from(metricPoints).get()?.n ?? 0,
+      alerts: db.select({ n: sql<number>`count(*)` }).from(alerts).get()?.n ?? 0,
+      incidents: db.select({ n: sql<number>`count(*)` }).from(incidents).get()?.n ?? 0,
+      due: previewObservabilityCleanup(db, { days: settingsStore.retention().observabilityDays ?? 15 }),
+    },
   });
 });
 
 const DAYS = z.number().int().min(1).max(3650).nullable();
-const retentionBody = z.object({ days: DAYS, dropImagesAfterDays: DAYS });
+const retentionBody = z.object({ days: DAYS, dropImagesAfterDays: DAYS, observabilityDays: z.number().int().min(1).max(365).optional() });
 
 maintenanceRoutes.put('/retention', (req, res) => {
   if (!isAdmin(req.user)) {
@@ -50,7 +56,7 @@ maintenanceRoutes.put('/retention', (req, res) => {
   const before = settingsStore.retention();
   // A policy change takes effect on the next scheduler tick rather than tomorrow.
   const saved = settingsStore.saveRetention({ ...parsed.data, nextRunAt: Date.now() + 60_000 });
-  audit(req.user, { entity: 'settings.retention', action: 'update', before: { days: before.days, dropImagesAfterDays: before.dropImagesAfterDays }, after: parsed.data });
+  audit(req.user, { entity: 'settings.retention', action: 'update', before: { days: before.days, dropImagesAfterDays: before.dropImagesAfterDays, observabilityDays: before.observabilityDays }, after: parsed.data });
   res.json(saved);
 });
 

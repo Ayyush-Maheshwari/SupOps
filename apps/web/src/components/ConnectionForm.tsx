@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { patch, post } from '../lib/api';
-import { Field, Panel, Segmented, Spinner } from './ui';
+import { Field, Panel, Segmented, Spinner, Switch } from './ui';
 import type { Target } from '../lib/types';
 
 type Kind = 'prometheus' | 'alertmanager' | 'loki' | 'elasticsearch' | 'grafana';
@@ -23,7 +23,7 @@ const KINDS: Array<{ value: Kind; label: string; hint: string; placeholder: stri
 export function ConnectionForm({ projectId, existing, onDone }: { projectId: string; existing?: Target; onDone: () => void }) {
   const qc = useQueryClient();
   const isEdit = !!existing;
-  const cfg = (existing?.config ?? {}) as { kind?: Kind; baseUrl?: string; allowPrivateNetwork?: boolean; insecureSkipVerify?: boolean; tenantId?: string; indices?: string[]; datasourceUid?: string };
+  const cfg = (existing?.config ?? {}) as { kind?: Kind; baseUrl?: string; allowPrivateNetwork?: boolean; insecureSkipVerify?: boolean; tenantId?: string; indices?: string[]; datasourceUid?: string; ingestAlerts?: boolean; watch?: boolean };
   const [kind, setKind] = useState<Kind>(cfg.kind ?? 'prometheus');
   const [form, setForm] = useState({
     slug: existing?.slug ?? '',
@@ -36,7 +36,14 @@ export function ConnectionForm({ projectId, existing, onDone }: { projectId: str
     tenantId: cfg.tenantId ?? '',
     indices: (cfg.indices ?? []).join(', '),
     datasourceUid: cfg.datasourceUid ?? '',
+    // Unset means the default: Alertmanager alerts are read, metrics are watched.
+    ingestAlerts: cfg.ingestAlerts as boolean | undefined,
+    watch: cfg.watch ?? true,
   });
+  const ingestDefault = kind === 'alertmanager';
+  const ingest = form.ingestAlerts ?? ingestDefault;
+  const canIngest = kind === 'alertmanager' || kind === 'prometheus' || kind === 'grafana';
+  const canWatch = kind === 'prometheus' || kind === 'grafana';
   const [authType, setAuthType] = useState<AuthType>(isEdit ? 'none' : 'none');
   const [changeAuth, setChangeAuth] = useState(!isEdit);
   const [token, setToken] = useState('');
@@ -58,6 +65,8 @@ export function ConnectionForm({ projectId, existing, onDone }: { projectId: str
         ...(kind === 'loki' && form.tenantId.trim() ? { tenantId: form.tenantId.trim() } : {}),
         ...(kind === 'elasticsearch' ? { indices: form.indices.split(/[\s,]+/).map((s) => s.trim()).filter(Boolean) } : {}),
         ...(kind === 'grafana' && form.datasourceUid.trim() ? { datasourceUid: form.datasourceUid.trim() } : {}),
+        ...(canIngest ? { ingestAlerts: ingest } : {}),
+        ...(canWatch ? { watch: form.watch } : {}),
       };
       const auth =
         authType === 'bearer' ? { type: 'bearer', token } : authType === 'basic' ? { type: 'basic', username, password } : { type: 'none' };
@@ -111,6 +120,31 @@ export function ConnectionForm({ projectId, existing, onDone }: { projectId: str
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.allowPrivateNetwork} onChange={set('allowPrivateNetwork')} /> On a private network (LAN / in-cluster)</label>
           <label className="flex items-center gap-2"><input type="checkbox" checked={form.insecureSkipVerify} onChange={set('insecureSkipVerify')} /> Accept a self-signed certificate</label>
         </div>
+
+        {(canIngest || canWatch) && (
+          <div className="space-y-2.5 border-t border-hairline pt-3">
+            {canIngest && (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm text-ink">Read alerts from it</div>
+                  <p className="text-[11px] text-muted">
+                    {kind === 'grafana' ? 'Grafana-managed alerts, through its built-in Alertmanager.' : kind === 'prometheus' ? "Prometheus' own firing alerts. Leave off if they already reach SupOps through Alertmanager." : 'Every minute. Nothing to configure on the Alertmanager side.'}
+                  </p>
+                </div>
+                <Switch label="Read alerts" checked={ingest} onChange={(v) => setForm((f) => ({ ...f, ingestAlerts: v }))} />
+              </div>
+            )}
+            {canWatch && (
+              <div className="flex items-start justify-between gap-4">
+                <div>
+                  <div className="text-sm text-ink">Watch key signals</div>
+                  <p className="text-[11px] text-muted">CPU, memory, disk, errors, latency and the stack itself, sampled every few minutes to spot what is unusual and what will run out.</p>
+                </div>
+                <Switch label="Watch signals" checked={form.watch} onChange={(v) => setForm((f) => ({ ...f, watch: v }))} />
+              </div>
+            )}
+          </div>
+        )}
 
         <div className="space-y-2 border-t border-hairline pt-3">
           {isEdit && !changeAuth ? (

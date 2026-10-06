@@ -92,6 +92,19 @@ export function withMachinesBehind<T extends MatchableTarget>(scoped: T[], avail
   return [...out.values()];
 }
 
+const OBSERVABILITY = new Set(['prometheus', 'alertmanager', 'loki', 'elasticsearch', 'grafana']);
+
+/**
+ * Add every observability connection. A run limited to one machine still needs the
+ * metrics, logs and alerts about it: they are read-only, and they are where the agent
+ * is told to look first.
+ */
+export function withObservability<T extends MatchableTarget>(scoped: T[], available: T[]): T[] {
+  const out = new Map(scoped.map((t) => [t.id, t]));
+  for (const t of available) if (OBSERVABILITY.has(t.kind)) out.set(t.id, t);
+  return [...out.values()];
+}
+
 /** Label keys that name the machine an alert is about, most specific first. */
 export const HOST_LABEL_KEYS = ['instance', 'host', 'hostname', 'node', 'nodename', 'server', 'ip', 'address'];
 

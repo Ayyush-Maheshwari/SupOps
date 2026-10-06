@@ -152,6 +152,10 @@ export interface ObservabilityConfig {
   datasourceUid?: string;
   /** Longest time window a query may cover. Default 168h for metrics, 24h for logs. */
   maxRangeHours?: number;
+  /** Read firing alerts from this connection into SupOps (Alertmanager, Prometheus, Grafana). */
+  ingestAlerts?: boolean;
+  /** Sample key signals from this connection continuously (Prometheus, Grafana). */
+  watch?: boolean;
 }
 
 /** Credential body for an observability connection (stored encrypted, as JSON). */

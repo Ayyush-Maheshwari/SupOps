@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { Bell, ExternalLink, Search, X } from 'lucide-react';
@@ -7,7 +7,9 @@ import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { SEVERITY_STYLE, timeAgo } from '../lib/format';
 import { PageHeader } from '../components/Layout';
-import { Empty, Panel, Spinner } from '../components/ui';
+import { Empty, Panel, Segmented, Spinner } from '../components/ui';
+
+const SOURCE_LABEL: Record<string, string> = { alertmanager: 'Alertmanager', prometheus: 'Prometheus', grafana: 'Grafana', supops: 'SupOps forecast', slack: 'Slack' };
 import type { Alert, AlertList, Run } from '../lib/types';
 
 export function Alerts() {
@@ -15,12 +17,13 @@ export function Alerts() {
   const qc = useQueryClient();
   const navigate = useNavigate();
   const [channel, setChannel] = useState<string | null>(null);
+  const [view, setView] = useState<'new' | 'investigating' | 'resolved'>('new');
 
-  const q = new URLSearchParams({ projectId: projectId ?? '', status: 'new' });
+  const q = new URLSearchParams({ projectId: projectId ?? '', status: view });
   if (channel) q.set('channel', channel);
 
   const list = useQuery({
-    queryKey: ['alerts', projectId, channel],
+    queryKey: ['alerts', projectId, channel, view],
     queryFn: () => api<AlertList>(`/alerts?${q.toString()}`),
     enabled: !!projectId,
     refetchInterval: 5000,
@@ -32,10 +35,10 @@ export function Alerts() {
   };
 
   const investigate = useMutation({
-    mutationFn: (id: string) => post<{ run: Run }>(`/alerts/${id}/investigate`, {}),
-    onSuccess: ({ run }) => {
+    mutationFn: (id: string) => post<{ run: Pick<Run, 'id'> | null; incidentId?: string; diagnosing?: boolean }>(`/alerts/${id}/investigate`, {}),
+    onSuccess: ({ run, incidentId }) => {
       invalidate();
-      navigate(`/runs/${run.id}`);
+      navigate(run ? `/runs/${run.id}` : `/observability/incidents/${incidentId}`);
     },
   });
   const ignore = useMutation({
@@ -49,10 +52,20 @@ export function Alerts() {
     <>
       <PageHeader
         title="Alerts"
-        subtitle="Live alerts picked up from Slack. Start a triage run or wave one off — resolved and ignored alerts clear themselves out."
+        subtitle="Every alert gets a read-only diagnosis as it arrives, like a health scan. Investigate starts the fix from it, and every change waits for your approval."
       />
 
       <div className="space-y-4 p-6">
+        <Segmented
+          label="Show"
+          value={view}
+          onChange={setView}
+          options={[
+            { value: 'new', label: `New${list.data?.statusCounts.new ? ` ${list.data.statusCounts.new}` : ''}` },
+            { value: 'investigating', label: 'Investigating' },
+            { value: 'resolved', label: 'Resolved' },
+          ]}
+        />
         {channels.length > 0 && (
           <div className="flex flex-wrap items-center gap-1.5">
             <span className="px-1 text-[10px] font-semibold uppercase tracking-wider text-muted">Channel</span>
@@ -94,14 +107,15 @@ export function Alerts() {
                   busy={investigate.isPending && investigate.variables === a.id}
                   onInvestigate={() => investigate.mutate(a.id)}
                   onIgnore={() => ignore.mutate(a.id)}
+                  actions={view === 'new'}
                 />
               ))}
             </ul>
           ) : (
             <Empty
               icon={<Bell size={26} />}
-              title="No active alerts"
-              hint="Nothing needs a decision right now. New alerts appear here as they fire; investigated ones move to Runs, and resolved or ignored ones clear out."
+              title={view === 'new' ? 'No new alerts' : view === 'investigating' ? 'Nothing being investigated' : 'No resolved alerts'}
+              hint={view === 'resolved' ? 'Resolved alerts are kept for 15 days.' : 'New alerts appear here as they fire, and are grouped into incidents on the Observability page.'}
             />
           )}
         </Panel>
@@ -117,20 +131,23 @@ export function Alerts() {
 }
 
 function AlertRow({
-  alert, busy, onInvestigate, onIgnore,
+  alert, busy, onInvestigate, onIgnore, actions,
 }: {
   alert: Alert;
   busy: boolean;
   onInvestigate: () => void;
   onIgnore: () => void;
+  actions: boolean;
 }) {
   const sev = SEVERITY_STYLE[alert.severity] ?? SEVERITY_STYLE.unknown!;
+  const diagnosing = alert.diagnosis?.triageState === 'evidence' || alert.diagnosis?.triageState === 'running';
 
   return (
-    <li className="flex items-start gap-4 px-5 py-4">
+    <li className="flex flex-wrap items-start gap-x-4 gap-y-3 px-4 py-4 sm:flex-nowrap sm:px-5">
       <span className={clsx('mt-1.5 h-2.5 w-2.5 shrink-0 rounded-full', sev.dot)} aria-hidden />
 
-      <div className="min-w-0 flex-1">
+      {/* On a phone the buttons drop below the text instead of squeezing it. */}
+      <div className="min-w-0 flex-1 basis-[calc(100%-2rem)] sm:basis-auto">
         <div className="flex flex-wrap items-center gap-2">
           <span className={clsx('chip border', sev.chip)}>{sev.label}</span>
           <span className="truncate text-[13px] font-medium text-ink">{alert.title}</span>
@@ -140,7 +157,8 @@ function AlertRow({
         </div>
 
         <div className="mt-1 flex flex-wrap items-center gap-2 text-[11px] text-muted">
-          {alert.channelName && <span className="font-mono text-cyan">{alert.channelName}</span>}
+          <span>{alert.channelName ? <span className="font-mono text-cyan">{alert.channelName}</span> : SOURCE_LABEL[alert.source] ?? alert.source}</span>
+          {alert.labels?.instance && <><span aria-hidden>·</span><span className="font-mono">{alert.labels.instance}</span></>}
           <span aria-hidden>·</span>
           <span className="whitespace-nowrap">{timeAgo(alert.lastSeenAt)}</span>
           {alert.slackPermalink && (
@@ -153,19 +171,66 @@ function AlertRow({
               <ExternalLink size={11} /> Slack
             </a>
           )}
+          {alert.incidentId && (
+            <Link to={`/observability/incidents/${alert.incidentId}`} className="text-blue-text hover:underline">incident</Link>
+          )}
+          {alert.runId && (
+            <Link to={`/runs/${alert.runId}`} className="text-blue-text hover:underline">investigation</Link>
+          )}
         </div>
 
         {alert.summary && <p className="mt-1.5 line-clamp-2 text-xs text-muted">{alert.summary}</p>}
+        <Diagnosis alert={alert} />
       </div>
 
-      <div className="flex shrink-0 items-center gap-2">
-        <button className="btn-primary !min-h-[34px] !text-xs" disabled={busy} onClick={onInvestigate}>
-          {busy ? <Spinner /> : <Search size={13} />} Investigate
+      {actions && <div className="flex shrink-0 items-center gap-2 pl-[26px] sm:pl-0">
+        <button
+          className="btn-primary !min-h-[34px] !text-xs"
+          disabled={busy}
+          onClick={onInvestigate}
+          title={diagnosing ? 'The read-only diagnosis is still running' : 'Starts from the diagnosis and proposes the fix; every change waits for your approval'}
+        >
+          {busy ? <Spinner /> : <Search size={13} />} {diagnosing ? 'View diagnosis' : 'Investigate'}
         </button>
         <button className="btn-ghost !min-h-[34px] !text-xs" onClick={onIgnore} title="Ignore this alert">
           <X size={13} /> Ignore
         </button>
-      </div>
+      </div>}
     </li>
   );
+}
+
+/** What the automatic, read-only diagnosis found -- or that it is still running. */
+function Diagnosis({ alert }: { alert: Alert }) {
+  const d = alert.diagnosis;
+  if (!d || !alert.incidentId) return null;
+  const base = 'mt-2 flex items-start gap-2 rounded-inner border px-2.5 py-1.5 text-xs leading-relaxed';
+  if (d.triageState === 'evidence' || d.triageState === 'running') {
+    return (
+      <div className={clsx(base, 'border-blue/25 bg-blue/[0.06] text-muted')}>
+        <Spinner className="!mt-0.5 !h-3 !w-3 shrink-0 text-blue" />
+        <span>
+          {d.triageState === 'evidence' ? 'Gathering evidence' : 'Diagnosing, read-only'}…{' '}
+          <Link className="text-blue-text hover:underline" to={d.runId ? `/runs/${d.runId}` : `/observability/incidents/${alert.incidentId}`}>watch</Link>
+        </span>
+      </div>
+    );
+  }
+  if (d.triageState === 'done' && d.rootCause) {
+    return (
+      <div className={clsx(base, 'border-hairline bg-tile-2/50')}>
+        <span className="shrink-0 font-medium text-ink">Diagnosis</span>
+        <span className="min-w-0 text-ink/85">
+          <span className="line-clamp-2">{d.rootCause}</span>
+          <span className="text-[11px] text-muted">
+            {d.confidence ? `${d.confidence} confidence · ` : ''}
+            <Link className="text-blue-text hover:underline" to={`/observability/incidents/${alert.incidentId}`}>evidence</Link>
+            {d.runId && <> · <Link className="text-blue-text hover:underline" to={`/runs/${d.runId}`}>report</Link></>}
+          </span>
+        </span>
+      </div>
+    );
+  }
+  if (d.triageNote) return <p className="mt-1.5 text-[11px] text-muted">{d.triageNote}</p>;
+  return null;
 }

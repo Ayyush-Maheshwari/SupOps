@@ -235,6 +235,15 @@ export interface Alert {
   labels: Record<string, string> | null;
   count: number;
   runId: string | null;
+  incidentId?: string | null;
+  /** The automatic read-only diagnosis of the alert's incident. */
+  diagnosis?: {
+    triageState: 'none' | 'evidence' | 'running' | 'done' | 'skipped' | 'failed';
+    triageNote: string | null;
+    rootCause: string | null;
+    confidence: string | null;
+    runId: string | null;
+  } | null;
   slackPermalink: string | null;
   receivedAt: number | string;
   lastSeenAt: number | string;
@@ -306,4 +315,126 @@ export interface HealthOverview {
   latest: HealthCheck | null;
   issues: HealthIssue[];
   schedule: HealthSchedule;
+}
+
+// ---- observability ----------------------------------------------------------------
+
+export type Severity = 'critical' | 'warning' | 'info' | 'unknown';
+
+export interface Incident {
+  id: string;
+  projectId: string;
+  title: string;
+  severity: Severity;
+  status: 'open' | 'resolved';
+  origin: 'alerts' | 'prediction';
+  groupReason: string | null;
+  targetIds: string[] | null;
+  triageState: 'none' | 'evidence' | 'running' | 'done' | 'skipped' | 'failed';
+  triageNote: string | null;
+  runId: string | null;
+  rootCause: string | null;
+  confidence: 'high' | 'medium' | 'low' | 'inconclusive' | null;
+  openedAt: string;
+  lastSeenAt: string;
+  resolvedAt: string | null;
+  mergedInto: string | null;
+  alertCount?: number;
+}
+
+export interface Observation {
+  id: string;
+  kind: 'anomaly' | 'forecast';
+  severity: 'critical' | 'warning' | 'info';
+  message: string;
+  targetId: string | null;
+  watchId: string;
+  series: string;
+  details: { etaMs?: number; confidence?: string; z?: number; baseline?: number } | null;
+  startedAt: string;
+  incidentId: string | null;
+  unit?: string;
+  title?: string;
+}
+
+export interface ObsConnection {
+  id: string;
+  slug: string;
+  kind: string;
+  importsAlerts: boolean;
+  watches: boolean;
+  poll: { at: number; ok: boolean; firing: number; error?: string } | null;
+  watchCount: number;
+  watchErrors: number;
+  lastSampledAt: number | null;
+}
+
+export interface ObservabilitySettings {
+  alertPollMs: number;
+  watchIntervalMs: number;
+  autoTriage: boolean;
+  triageMinSeverity: 'critical' | 'warning' | 'info';
+  triageMaxPerHour: number;
+  predictWarningHours: number;
+  predictCriticalHours: number;
+}
+
+export interface ObservabilityOverview {
+  incidents: Incident[];
+  observations: Observation[];
+  connections: ObsConnection[];
+  settings: ObservabilitySettings;
+}
+
+export interface Evidence {
+  id: string;
+  ref: string;
+  check: string;
+  title: string;
+  connection: string | null;
+  query: string | null;
+  status: 'interesting' | 'normal' | 'unavailable' | 'error';
+  summary: string;
+}
+
+export interface IncidentDetail {
+  incident: Incident & { targets: string[] };
+  alerts: Array<Alert & { startsAt: string | null; resolvedAt: string | null; connectionId: string | null }>;
+  evidence: Evidence[];
+  observations: Observation[];
+  run: { id: string; status: RunStatus; title: string; startedAt: string; endedAt: string | null } | null;
+  fixRun: { id: string; status: RunStatus; startedAt: string } | null;
+  timeline: Array<{ at: number; kind: string; text: string }>;
+  mergeCandidates: Array<{ id: string; title: string }>;
+}
+
+export interface Watch {
+  id: string;
+  connectionId: string;
+  connection: string | null;
+  key: string;
+  title: string;
+  query: string;
+  unit: string;
+  builtin: boolean;
+  badDirection: 'up' | 'down' | 'both';
+  limit: { value: number; when: 'below' | 'above' } | null;
+  group: 'resources' | 'traffic' | 'kubernetes' | 'stack' | 'custom';
+  enabled: boolean;
+  lastRunAt: string | null;
+  lastError: string | null;
+  seriesCount: number;
+  series: Array<{ key: string; name: string; points: Array<[number, number]>; flags: string[] }>;
+  moreSeries: number;
+}
+
+export interface WatchDetail {
+  watch: Watch;
+  series: Array<{
+    key: string;
+    name: string;
+    points: Array<[number, number]>;
+    band: { low: number; high: number; median: number } | null;
+    forecast: { etaMs: number; slopePerHour: number; confidence: string; current: number } | null;
+  }>;
 }

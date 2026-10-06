@@ -7,7 +7,7 @@ import type { LLMClient } from '../llm/client.ts';
 import { backoffMs } from '../llm/client.ts';
 import { FatalLLMError, RetryableLLMError } from '../llm/errors.ts';
 import type { KnowledgeAccess, ResolvedTool, ToolDef } from '../tools/types.ts';
-import { KNOWLEDGE_TOOL_KEYS } from '../tools/builtin.ts';
+import { KNOWLEDGE_TOOL_KEYS, OBSERVABILITY_TOOL_KEYS } from '../tools/builtin.ts';
 import { readRunKnowledge, searchRunKnowledge, type RunScope } from '../knowledge/retrieve.ts';
 import { bindTools, effectiveToolKeys, type ToolRegistry } from '../tools/registry.ts';
 import { assessRisk } from '../risk/index.ts';
@@ -581,10 +581,12 @@ export class Engine {
         ...(run.policySnapshot.networkChecks && keys.has(netCheckTool.key) ? [netCheckTool as never as ToolDef<never>] : []),
         ...KNOWLEDGE_TOOL_KEYS.filter((k) => keys.has(k)).map((k) => this.registry.get(k)).filter((d): d is NonNullable<typeof d> => !!d),
       ];
+      // Observability connections in the snapshot stay readable (see start-run).
+      const obsDefs = OBSERVABILITY_TOOL_KEYS.filter((k) => keys.has(k)).map((k) => this.registry.get(k)).filter((d): d is NonNullable<typeof d> => !!d);
       return {
         budget: agent.budget,
         killSwitch: project.killSwitch,
-        tools: bindTools(defs, [NETWORK_TARGET]),
+        tools: [...bindTools(defs, [NETWORK_TARGET]), ...bindTools(obsDefs, targets)].sort((a, b) => a.def.key.localeCompare(b.def.key)),
         knowledgeScope: 'all',
       };
     }

@@ -1,4 +1,4 @@
-import { deleteOldRuns, dropOldImages, previewCleanup, reclaimSpace } from '@supops/core';
+import { cleanupObservability, deleteOldRuns, dropOldImages, previewCleanup, reclaimSpace } from '@supops/core';
 import type { CleanupPreview } from '@supops/core';
 import { config } from '../config.ts';
 import { db, settingsStore, sqlite } from '../context.ts';
@@ -52,20 +52,28 @@ export async function runHistoryCleanup(req: CleanupRequest): Promise<CleanupRes
   }
 }
 
-/** The scheduled job: runs the stored policy if it is due. */
+/**
+ * The scheduled job: runs the stored policy if it is due. Observability data
+ * (rollups, closed alerts and incidents) is always cleaned, even when run history
+ * is kept forever.
+ */
 export async function runScheduledRetention(now = Date.now()): Promise<void> {
   const cfg = settingsStore.retention();
-  if (cfg.days === null && cfg.dropImagesAfterDays === null) return;
   if (cfg.nextRunAt !== null && now < cfg.nextRunAt) return;
 
   // Reschedule first, so a failure does not retry every tick.
   settingsStore.saveRetention({ lastRunAt: now, nextRunAt: now + 24 * 60 * 60_000 });
   try {
-    const r = await runHistoryCleanup({
-      olderThanDays: cfg.days,
-      dropImagesAfterDays: cfg.dropImagesAfterDays,
-    });
-    settingsStore.saveRetention({ lastResult: { at: now, runs: r.runs, images: r.images, freedBytes: r.freedBytes } });
+    const obs = cleanupObservability(db, { days: cfg.observabilityDays ?? 15, now });
+    const removed = obs.points + obs.observations + obs.incidents + obs.alerts;
+    if (removed) console.log(`  clean-up: removed ${obs.points} metric points, ${obs.alerts} alerts, ${obs.incidents} incidents, ${obs.observations} observations`);
+    const r = cfg.days === null && cfg.dropImagesAfterDays === null
+      ? { runs: 0, images: 0, ...reclaimSpace(sqlite, config.databasePath) }
+      : await runHistoryCleanup({
+          olderThanDays: cfg.days,
+          dropImagesAfterDays: cfg.dropImagesAfterDays,
+        });
+    settingsStore.saveRetention({ lastResult: { at: now, runs: r.runs, images: r.images, freedBytes: r.freedBytes, observability: removed } });
   } catch (err) {
     settingsStore.saveRetention({
       lastResult: { at: now, runs: 0, images: 0, freedBytes: 0, error: err instanceof Error ? err.message : String(err) },

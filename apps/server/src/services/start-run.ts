@@ -14,8 +14,12 @@ import {
   KNOWLEDGE_TOOL_KEYS,
   netCheckTool,
   NETWORK_TARGET,
+  OBSERVABILITY_TOOL_KEYS,
+  withObservability,
 } from '@supops/core';
+import { isObservabilityKind } from '@supops/shared';
 import { db, engine, registry, settingsStore } from '../context.ts';
+import { observationContext } from '../observe/context.ts';
 import { worker } from '../worker.ts';
 
 export interface StartRunInput {
@@ -50,6 +54,8 @@ export interface StartRunInput {
   advisory?: boolean;
   /** Advisory runs only: allow read-only network checks from the SupOps server. Default true. */
   networkChecks?: boolean;
+  /** An incident investigation: its alerts and evidence pack go in the opening message. */
+  incident?: { evidence: string; mode?: 'diagnose' | 'fix' };
 }
 
 export type StartRunResult =
@@ -94,8 +100,13 @@ export function startRun(input: StartRunInput): StartRunResult {
   if (targets.length === 0 && targetIds?.length) {
     return { ok: false, code: 400, error: 'None of the selected targets are available.' };
   }
-  const advisory = !!input.advisory || available.length === 0;
-  if (advisory) targets = [];
+  // A run limited to some machines still reads the metrics, logs and alerts about them.
+  if (targetIds?.length) targets = withObservability(targets, available);
+  // Observability connections are read-only APIs, not access to a host: a project with
+  // only those is still advisory, and an advisory run keeps them.
+  const observability = available.filter((t) => isObservabilityKind(t.kind));
+  const advisory = !!input.advisory || available.length === observability.length;
+  if (advisory) targets = observability;
 
   // Cluster targets are just another way to reach infrastructure: an agent allowed to
   // run commands on machines (ssh_exec) may run kubectl on clusters too. Agents saved
@@ -114,7 +125,10 @@ export function startRun(input: StartRunInput): StartRunResult {
     .get();
   const knowledgeTools = hasKnowledge ? KNOWLEDGE_TOOL_KEYS.map((k) => registry.get(k)!).filter(Boolean) : [];
   const tools = advisory
-    ? bindTools([...(networkChecks ? [netCheckTool as never] : []), ...knowledgeTools], [NETWORK_TARGET])
+    ? [
+        ...bindTools([...(networkChecks ? [netCheckTool as never] : []), ...knowledgeTools], [NETWORK_TARGET]),
+        ...bindTools(OBSERVABILITY_TOOL_KEYS.map((k) => registry.get(k)!).filter(Boolean), targets),
+      ].sort((a, b) => a.def.key.localeCompare(b.def.key))
     : bindTools([...resolved, ...knowledgeTools], targets);
   const targetSummaries = targets.map((t) => ({
     slug: t.slug,
@@ -124,7 +138,12 @@ export function startRun(input: StartRunInput): StartRunResult {
     ...(t.config.kind === 'ssh' && t.config.addresses?.length ? { addresses: t.config.addresses } : {}),
   }));
 
-  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt, { advisory, networkChecks });
+  const system = buildSystemPrompt(project.systemPromptExtra, agent.systemPrompt, {
+    advisory,
+    networkChecks,
+    observability: advisory && targets.length > 0,
+    incident: input.incident ? (input.incident.mode ?? 'diagnose') : false,
+  });
 
   // The project's policy combined with this agent's override (which may raise the
   // agent up to the project ceiling, and can otherwise only tighten).
@@ -187,6 +206,8 @@ export function startRun(input: StartRunInput): StartRunResult {
     knowledge: knowledge.block,
     advisory,
     networkChecks,
+    evidence: input.incident?.evidence,
+    observations: observationContext(projectId, targets.map((t) => t.id)) ?? undefined,
   });
   const imageIds = input.images?.length ? saveImages(run.id, input.images, input.startedBy ?? null) : [];
   engine.store.appendStep(run.id, { role: 'user', content: userContent(opening, imageIds) });

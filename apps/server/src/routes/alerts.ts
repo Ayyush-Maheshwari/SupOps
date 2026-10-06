@@ -1,11 +1,13 @@
 import { Router } from 'express';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { z } from 'zod';
-import { agents, alerts } from '@supops/db';
+import { agents, alerts, incidents } from '@supops/db';
 import type { AlertStatus } from '@supops/shared';
 import { loadTargets, scopeAlert } from '@supops/core';
 import { db } from '../context.ts';
 import { startRun } from '../services/start-run.ts';
+import { refreshIncident } from '../observe/incidents.ts';
+import { startIncidentRun } from '../observe/triage.ts';
 
 export const alertRoutes = Router();
 
@@ -20,7 +22,9 @@ alertRoutes.get('/', (req, res) => {
   const channel = typeof req.query.channel === 'string' ? req.query.channel : null;
 
   const where = [eq(alerts.projectId, projectId)];
-  if (status) where.push(eq(alerts.status, status));
+  // Default view: what still needs a decision. `status=all` shows history too.
+  if (status && (status as string) !== 'all') where.push(eq(alerts.status, status));
+  else if (!status) where.push(inArray(alerts.status, ['new', 'investigating']));
   if (channel) where.push(eq(alerts.channelId, channel));
 
   const rows = db
@@ -45,8 +49,15 @@ alertRoutes.get('/', (req, res) => {
     .where(eq(alerts.projectId, projectId))
     .all();
 
+  // The automatic diagnosis of each alert's incident, so the list shows what is known.
+  const incIds = [...new Set(rows.map((r) => r.incidentId).filter((x): x is string => !!x))];
+  const diag = new Map(
+    (incIds.length ? db.select({ id: incidents.id, triageState: incidents.triageState, triageNote: incidents.triageNote, rootCause: incidents.rootCause, confidence: incidents.confidence, runId: incidents.runId }).from(incidents).where(inArray(incidents.id, incIds)).all() : [])
+      .map((d) => [d.id, d]),
+  );
+
   res.json({
-    alerts: rows,
+    alerts: rows.map((r) => ({ ...r, diagnosis: r.incidentId ? diag.get(r.incidentId) ?? null : null })),
     statusCounts: Object.fromEntries(byStatus.map((r) => [r.status, r.n])),
     channels: channels.filter((c) => c.channelId),
   });
@@ -109,6 +120,24 @@ alertRoutes.post('/:id/investigate', (req, res) => {
     return;
   }
 
+  // The read-only diagnosis starts by itself when the alert arrives. Investigate
+  // builds on it: while it is still running, open it; once it is done, start the fix,
+  // where every change waits for a person's approval.
+  const inc = alert.incidentId ? db.select().from(incidents).where(eq(incidents.id, alert.incidentId)).get() : undefined;
+  if (inc) {
+    if (inc.triageState === 'evidence' || (inc.triageState === 'running' && inc.runId)) {
+      res.json({ diagnosing: true, incidentId: inc.id, run: inc.runId ? { id: inc.runId } : null });
+      return;
+    }
+    const r = startIncidentRun(inc, { mode: 'fix', startedBy: req.user?.id ?? null });
+    if (!r.ok) {
+      res.status(r.code).json({ error: r.error });
+      return;
+    }
+    res.status(201).json({ run: { id: r.runId }, incidentId: inc.id });
+    return;
+  }
+
   const triage =
     db.select().from(agents).where(and(eq(agents.projectId, alert.projectId), eq(agents.slug, 'triage'))).get() ??
     db.select().from(agents).where(eq(agents.projectId, alert.projectId)).get();
@@ -148,19 +177,36 @@ alertRoutes.post('/:id/investigate', (req, res) => {
     .set({ status: 'investigating', runId: result.run.id, decidedAt: new Date(), decidedBy: req.user?.id ?? null })
     .where(eq(alerts.id, alert.id))
     .run();
+  // The incident it belongs to shows this investigation too, unless it has its own.
+  if (alert.incidentId) {
+    db.update(incidents)
+      .set({ runId: result.run.id, triageState: 'running', triageNote: null })
+      .where(and(eq(incidents.id, alert.incidentId), isNull(incidents.runId)))
+      .run();
+  }
 
   res.status(201).json({ run: result.run, scopedTo: matches.map((t) => t.slug) });
 });
 
 const decisionBody = z.object({ projectId: z.string().optional() });
 
-/** Ignore = gone. The Alerts view holds only what still needs a decision. */
+/**
+ * Ignore: out of the queue, kept as history (cleaned up with the rest after the
+ * observability retention). An alert read from a connection stays ignored while
+ * that connection still reports it.
+ */
 alertRoutes.post('/:id/ignore', (req, res) => {
   decisionBody.safeParse(req.body);
-  const removed = db.delete(alerts).where(eq(alerts.id, req.params.id)).returning().get();
-  if (!removed) {
+  const row = db
+    .update(alerts)
+    .set({ status: 'ignored', decidedAt: new Date(), decidedBy: req.user?.id ?? null })
+    .where(eq(alerts.id, req.params.id))
+    .returning()
+    .get();
+  if (!row) {
     res.status(404).json({ error: 'Alert not found' });
     return;
   }
+  refreshIncident(row.incidentId);
   res.json({ ok: true });
 });

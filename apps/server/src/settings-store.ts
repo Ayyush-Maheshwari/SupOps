@@ -1,6 +1,7 @@
 import { eq } from 'drizzle-orm';
 import {
   HEALTH_SETTINGS_KEY,
+  OBSERVABILITY_SETTINGS_KEY,
   RETENTION_SETTINGS_KEY,
   LLM_SETTINGS_KEY,
   decryptSecret,
@@ -9,7 +10,7 @@ import {
   settings,
   unpackEnvelope,
 } from '@supops/db';
-import type { StoredHealthSettings, StoredLlmSettings, StoredRetentionSettings } from '@supops/db';
+import type { StoredHealthSettings, StoredLlmSettings, StoredObservabilitySettings, StoredRetentionSettings } from '@supops/db';
 import type { Db } from '@supops/db';
 import type { LLMConfig } from '@supops/core';
 import { config } from './config.ts';
@@ -133,7 +134,33 @@ export class SettingsStore {
       lastRunAt: stored?.lastRunAt ?? null,
       nextRunAt: stored?.nextRunAt ?? null,
       lastResult: stored?.lastResult ?? null,
+      observabilityDays: stored?.observabilityDays ?? 15,
     };
+  }
+
+  /** Observability defaults: alerts read every minute, metrics every 5, every alert diagnosed (read-only). */
+  observability(): StoredObservabilitySettings {
+    const row = this.db.select().from(settings).where(eq(settings.key, OBSERVABILITY_SETTINGS_KEY)).get();
+    const stored = (row?.value as Partial<StoredObservabilitySettings> | undefined) ?? {};
+    return {
+      alertPollMs: stored.alertPollMs ?? 60_000,
+      watchIntervalMs: stored.watchIntervalMs ?? 5 * 60_000,
+      autoTriage: stored.autoTriage ?? true,
+      triageMinSeverity: stored.triageMinSeverity ?? 'info',
+      triageMaxPerHour: stored.triageMaxPerHour ?? 20,
+      predictWarningHours: stored.predictWarningHours ?? 24,
+      predictCriticalHours: stored.predictCriticalHours ?? 4,
+    };
+  }
+
+  saveObservability(patch: Partial<StoredObservabilitySettings>): StoredObservabilitySettings {
+    const next: StoredObservabilitySettings = { ...this.observability(), ...patch };
+    this.db
+      .insert(settings)
+      .values({ key: OBSERVABILITY_SETTINGS_KEY, value: next, updatedAt: new Date() })
+      .onConflictDoUpdate({ target: settings.key, set: { value: next, updatedAt: new Date() } })
+      .run();
+    return next;
   }
 
   saveRetention(patch: Partial<StoredRetentionSettings>): StoredRetentionSettings {

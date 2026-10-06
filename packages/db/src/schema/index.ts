@@ -5,6 +5,7 @@ export * from './targets.ts';
 export * from './agents.ts';
 export * from './runs.ts';
 export * from './settings.ts';
+export * from './observe.ts';
 export * from './alerts.ts';
 export * from './health.ts';
 export * from './audit.ts';

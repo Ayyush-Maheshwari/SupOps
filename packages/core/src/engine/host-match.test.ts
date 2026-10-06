@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TargetConfig } from '@supops/db';
-import { hostCandidates, hostForms, matchTargetsByHost, matchTargetsEmbedded, parseHostAddresses, scopeAlert, withJumps, withMachinesBehind } from './host-match.ts';
+import { hostCandidates, hostForms, matchTargetsByHost, matchTargetsEmbedded, parseHostAddresses, scopeAlert, withJumps, withMachinesBehind, withObservability } from './host-match.ts';
 
 const ssh = (id: string, slug: string, extra: Record<string, unknown> = {}) => ({
   id, slug, kind: 'ssh',
@@ -124,4 +124,12 @@ test('the opening message lists addresses so the agent can map an alert to a mac
   assert.match(msg, /- jumphost \(ssh, env=prod\) \[also known as jump-metrics, 10\.0\.4\.20\]/);
   assert.match(msg, /Addresses of machines behind a jump: worker1=10\.0\.4\.40/);
   assert.match(msg, /about a jump host itself/);
+});
+
+test('a scoped run keeps every observability connection', () => {
+  const prom = { id: 'p', slug: 'prom', kind: 'prometheus', config: { kind: 'prometheus', baseUrl: 'http://prom.example:9090', allowPrivateNetwork: true } as unknown as TargetConfig };
+  const scoped = withObservability([behindA], [...all, prom]);
+  assert.deepEqual(scoped.map((t) => t.slug).sort(), ['prom', 'worker1']);
+  // Already present: not duplicated.
+  assert.equal(withObservability([prom], [prom]).length, 1);
 });

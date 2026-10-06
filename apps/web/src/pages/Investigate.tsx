@@ -3,6 +3,8 @@ import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useQuery } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { BookOpen, Check, Send, Server } from 'lucide-react';
+import { ObservabilityIcon } from '../components/icons/ObservabilityIcon';
+import { isObservabilityKind } from '@supops/shared';
 import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { PageHeader } from '../components/Layout';
@@ -74,7 +76,12 @@ export function Investigate() {
       childrenByHost.set(hostOf(t), list);
     }
   }
-  const primaries = allTargets.filter((t) => !isVia(t));
+  // Metrics, logs and alerts connections are not machines: they are always in reach
+  // of a run, and listed on their own.
+  const connections = allTargets.filter((t) => isObservabilityKind(t.kind));
+  const primaries = allTargets.filter((t) => !isVia(t) && !isObservabilityKind(t.kind));
+  /** Investigate the monitoring itself (Prometheus, Alertmanager, Loki...) instead of a system. */
+  const [stackMode, setStackMode] = useState(false);
   const childrenOf = (t: Target) => childrenByHost.get(hostOf(t)) ?? [];
 
   // With a single primary there is nothing to choose, so preselect it and let the
@@ -93,8 +100,9 @@ export function Investigate() {
     '';
   const scoped = selected.length > 0 && selected.length < primaries.length;
   const chosenTargets = primaries.filter((t) => selected.includes(t.id));
-  const noTargets = targets.data?.length === 0;
-  const advisory = noTargets || mode === 'advisory';
+  // Only connections and no machines: advisory, reading metrics and logs.
+  const noTargets = !!targets.data && primaries.length === 0 && allTargets.filter((t) => !isObservabilityKind(t.kind)).length === 0;
+  const advisory = !stackMode && (noTargets || mode === 'advisory');
   const hiddenVmCount = chosenTargets.reduce((n, t) => n + childrenOf(t).length, 0);
 
   const toggle = (id: string) =>
@@ -112,6 +120,11 @@ export function Investigate() {
       for (const id of selected) {
         const t = allTargets.find((x) => x.id === id);
         if (t) for (const c of childrenOf(t)) ids.add(c.id);
+      }
+      if (stackMode) {
+        const { run } = await post<{ run: Run }>('/observability/stack-investigate', { projectId, agentId: chosenAgent, task: task.trim() || undefined });
+        navigate(`/runs/${run.id}`);
+        return;
       }
       const run = await post<Run>('/runs', {
         projectId,
@@ -139,12 +152,12 @@ export function Investigate() {
               <p className="flex gap-2.5 rounded-inner border border-hairline bg-tile-2/60 px-3.5 py-3 text-xs leading-relaxed text-muted">
                 <BookOpen size={15} className="mt-px shrink-0 text-blue-text" />
                 <span>
-                  <span className="font-medium text-ink">Advisory mode.</span> No systems are connected, so SupOps
-                  cannot run anything. It works from your description, screenshots and this project's runbooks and
-                  facts, and gives you the checks and the fix to run yourself.
+                  <span className="font-medium text-ink">Advisory mode.</span> No machines or clusters are connected, so SupOps
+                  cannot run anything on them. It works from your description, screenshots and this project's runbooks and
+                  facts{connections.length ? ', reads your metrics, logs and alerts,' : ''} and gives you the checks and the fix to run yourself.
                 </span>
               </p>
-            ) : (
+            ) : stackMode ? null : (
               <div role="radiogroup" aria-label="Mode" className="grid grid-cols-2 gap-1 rounded-inner border border-hairline bg-tile-2/60 p-1">
                 {([
                   ['live', Server, 'Live systems', 'Checks your systems itself'],
@@ -185,7 +198,36 @@ export function Investigate() {
               </div>
             )}
 
-            {!advisory && (
+            {connections.length > 0 && (
+              <Field
+                label="Metrics, logs and alerts"
+                hint={stackMode
+                  ? 'Checks the monitoring itself first: scrape targets, alert rules, notifications, storage and log ingestion. Read-only.'
+                  : 'Always readable by the agent, whatever else is selected.'}
+              >
+                <div className="flex flex-wrap items-center gap-2">
+                  {connections.map((c) => (
+                    <span key={c.id} className="inline-flex items-center gap-1.5 rounded-full border border-hairline bg-tile-2/60 px-2.5 py-1 font-mono text-[11px] text-muted">
+                      <span className={clsx('h-1.5 w-1.5 rounded-full', (HEALTH_STYLE[c.healthState] ?? HEALTH_STYLE.unknown!).dot)} />
+                      {c.slug}
+                    </span>
+                  ))}
+                  <button
+                    type="button"
+                    aria-pressed={stackMode}
+                    onClick={() => setStackMode((v) => !v)}
+                    className={clsx(
+                      'inline-flex min-h-[32px] items-center gap-1.5 rounded-full border px-3 text-xs transition-colors',
+                      stackMode ? 'border-blue/60 bg-blue/10 text-ink' : 'border-hairline text-muted hover:border-edge hover:text-ink',
+                    )}
+                  >
+                    {stackMode ? <Check size={12} strokeWidth={3} /> : <ObservabilityIcon size={12} />} Investigate the stack itself
+                  </button>
+                </div>
+              </Field>
+            )}
+
+            {!advisory && !stackMode && (
             <Field
               label="Targets"
               hint={
@@ -316,7 +358,9 @@ export function Investigate() {
 
             <div className="flex items-center justify-between gap-4">
               <p className="text-xs text-muted">
-                {advisory
+                {stackMode
+                  ? 'Read-only: the monitoring stack is checked through its own APIs.'
+                  : advisory
                   ? networkChecks
                     ? 'Nothing runs on your systems. You get likely causes, checks and a fix, with every command rated by the risk engine.'
                     : 'Nothing runs. You get likely causes, checks and a fix, and every command is rated by the risk engine before you run it.'
@@ -327,7 +371,7 @@ export function Investigate() {
               <button
                 className="btn-primary shrink-0"
                 onClick={start}
-                disabled={busy || att.busy || !hasInput || !chosenAgent || !targets.data || (!advisory && !targets.data.length)}
+                disabled={busy || att.busy || (!hasInput && !stackMode) || !chosenAgent || !targets.data || (!advisory && !stackMode && !targets.data.length)}
               >
                 {busy ? <Spinner /> : <Send size={15} />} Start
               </button>

@@ -1,6 +1,6 @@
 import { and, eq, inArray, isNotNull, lt, notInArray, sql } from 'drizzle-orm';
 import type { Db } from '@supops/db';
-import { healthChecks, healthIssues, runAttachments, runs } from '@supops/db';
+import { healthChecks, healthIssues, incidents, runAttachments, runs } from '@supops/db';
 import { TERMINAL_RUN_STATUSES } from '@supops/shared';
 
 /**
@@ -13,7 +13,7 @@ import { TERMINAL_RUN_STATUSES } from '@supops/shared';
  * alone does not shrink a SQLite file.
  *
  * What is never removed: runs still doing something, pinned runs, and runs an open
- * health issue or a running health check still points at.
+ * health issue, an open incident or a running health check still points at.
  */
 
 /** A run may be cleaned up only once nothing is in flight. A parked console session counts as finished. */
@@ -43,6 +43,12 @@ function protectedRunIds(db: Db): Set<string> {
     .select({ id: healthChecks.runId })
     .from(healthChecks)
     .where(and(isNotNull(healthChecks.runId), eq(healthChecks.status, 'running')))
+    .all()) if (r.id) keep.add(r.id);
+  // The investigation of an incident that is still open.
+  for (const r of db
+    .select({ id: incidents.runId })
+    .from(incidents)
+    .where(and(isNotNull(incidents.runId), eq(incidents.status, 'open')))
     .all()) if (r.id) keep.add(r.id);
   return keep;
 }

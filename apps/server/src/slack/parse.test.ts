@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { parseAlertmanagerMessage, type SlackMessage } from './parse.ts';
+import { parseAlertmanagerMessage, parseAlertmanagerMessages, type SlackMessage } from './parse.ts';
 
 const CH = 'C123';
 
@@ -124,4 +124,38 @@ test('severity from an *Alert:* label (no severity key, no colour)', () => {
 test('severity synonyms normalise (warn -> warning, P1 -> critical)', () => {
   assert.equal(parseAlertmanagerMessage({ text: 'severity: warn' }, CH).severity, 'warning');
   assert.equal(parseAlertmanagerMessage({ text: 'priority: P1' }, CH).severity, 'critical');
+});
+
+test('the word "resolved" in a firing alert does not resolve it', () => {
+  const p = parseAlertmanagerMessage({
+    attachments: [{ color: 'danger', title: '[FIRING:1] DnsFailing', text: 'alertname: DnsFailing\nsummary: hostname could not be resolved\nseverity: critical' }],
+  }, CH);
+  assert.equal(p.status, 'firing');
+  // Without any tag, a status label still decides.
+  assert.equal(parseAlertmanagerMessage({ text: 'alertname: X\nstatus: resolved' }, CH).status, 'resolved');
+});
+
+test('a grouped notification becomes one alert per instance', () => {
+  const msg: SlackMessage = {
+    attachments: [{
+      color: 'danger',
+      title: '[FIRING:3] HighCPU',
+      text: '*Alert:* CPU high\n• *alertname:* `HighCPU`\n• *instance:* `web-1`\n• *severity:* `warning`\n' +
+        '*Alert:* CPU high\n• *alertname:* `HighCPU`\n• *instance:* `web-2`\n• *severity:* `warning`\n' +
+        '*Alert:* CPU high\n• *alertname:* `HighCPU`\n• *instance:* `web-3`\n• *severity:* `critical`',
+      fallback: '[FIRING:3] HighCPU alertname: HighCPU',
+    }],
+  };
+  const all = parseAlertmanagerMessages(msg, CH);
+  assert.deepEqual(all.map((a) => a.labels.instance), ['web-1', 'web-2', 'web-3']);
+  assert.equal(new Set(all.map((a) => a.fingerprint)).size, 3);
+  assert.equal(all[2]!.severity, 'critical');
+  assert.ok(all.every((a) => a.title === 'HighCPU' && a.status === 'firing'));
+});
+
+test('a single alert whose text repeats its labels stays one alert', () => {
+  const msg: SlackMessage = {
+    attachments: [{ color: 'danger', title: '[FIRING:1] DiskFull', text: 'alertname: DiskFull\ninstance: db-1', fallback: 'alertname: DiskFull instance: db-1' }],
+  };
+  assert.equal(parseAlertmanagerMessages(msg, CH).length, 1);
 });

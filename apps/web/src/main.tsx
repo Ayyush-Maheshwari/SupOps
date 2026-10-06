@@ -15,6 +15,8 @@ import { Runs } from './pages/Runs';
 import { RunDetail } from './pages/RunDetail';
 import { Approvals } from './pages/Approvals';
 import { Alerts } from './pages/Alerts';
+import { Observability } from './pages/Observability';
+import { IncidentDetail } from './pages/IncidentDetail';
 import { Health } from './pages/Health';
 import { Users } from './pages/Users';
 import { Targets } from './pages/Targets';
@@ -63,6 +65,8 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/runs/:id" element={<RunDetail />} />
             <Route path="/approvals" element={<Approvals />} />
             <Route path="/alerts" element={<Alerts />} />
+            <Route path="/observability" element={<Observability />} />
+            <Route path="/observability/incidents/:id" element={<IncidentDetail />} />
             <Route path="/health" element={<Health />} />
             <Route path="/targets" element={<Targets />} />
             <Route path="/agents" element={<Agents />} />

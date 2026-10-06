@@ -69,7 +69,36 @@ export interface StoredRetentionSettings {
   dropImagesAfterDays: number | null;
   lastRunAt: number | null;
   nextRunAt: number | null;
-  lastResult: { at: number; runs: number; images: number; freedBytes: number; error?: string } | null;
+  lastResult: { at: number; runs: number; images: number; freedBytes: number; observability?: number; error?: string } | null;
+  /**
+   * Keep alerts, incidents, evidence, metric rollups and observations this many days
+   * after they resolve. Always on (default 15): they are rebuilt from the backends,
+   * and rollups would otherwise grow every few minutes forever.
+   */
+  observabilityDays?: number;
 }
 
 export const RETENTION_SETTINGS_KEY = 'retention';
+
+/**
+ * Stored under `settings.key = 'observability'`: how SupOps reads alerts from its
+ * connections, watches metrics, and triages incidents on its own.
+ */
+export interface StoredObservabilitySettings {
+  /** How often alerts are read from connections that import them. */
+  alertPollMs: number;
+  /** How often watched metrics are sampled. */
+  watchIntervalMs: number;
+  /** Diagnose new incidents automatically, read-only (like a health scan); fixes need a person. */
+  autoTriage: boolean;
+  /** Lowest severity that is triaged automatically. */
+  triageMinSeverity: 'critical' | 'warning' | 'info';
+  /** At most this many automatic investigations start per hour, across all projects. */
+  triageMaxPerHour: number;
+  /** Open an incident when a resource is predicted to run out within this many hours. */
+  predictWarningHours: number;
+  /** ...and mark it critical within this many. */
+  predictCriticalHours: number;
+}
+
+export const OBSERVABILITY_SETTINGS_KEY = 'observability';

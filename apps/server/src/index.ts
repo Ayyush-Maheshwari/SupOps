@@ -11,6 +11,8 @@ import { api } from './routes/index.ts';
 import { worker } from './worker.ts';
 import { healthScheduler } from './health-scheduler.ts';
 import { maintenanceScheduler } from './maintenance-scheduler.ts';
+import { observeScheduler } from './observe/scheduler.ts';
+import { ensureBuiltinAgentsEverywhere } from './services/builtin-agents.ts';
 import { slackListener } from './slack/listener.ts';
 
 const app = express();
@@ -91,9 +93,11 @@ http.listen(config.port, () => {
   console.log(`  model            ${config.llm.model}`);
   console.log(`  run concurrency  ${config.runConcurrency}`);
   warnAboutConfig();
+  ensureBuiltinAgentsEverywhere();
   worker.start();
   healthScheduler.start();
   maintenanceScheduler.start();
+  observeScheduler.start();
   // Fire-and-forget: a Slack outage must never block the server from serving.
   void slackListener.start();
   console.log('');
@@ -104,6 +108,7 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
     worker.stop();
     healthScheduler.stop();
     maintenanceScheduler.stop();
+    observeScheduler.stop();
     void slackListener.stop();
     http.close(() => process.exit(0));
   });

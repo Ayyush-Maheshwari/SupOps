@@ -3,15 +3,17 @@ import type { AlertSeverity, AlertSource, AlertStatus } from '@supops/shared';
 import { createdAt, id, ts } from './_common.ts';
 import { projects, users } from './identity.ts';
 import { runs } from './runs.ts';
+import { targets } from './targets.ts';
+import { incidents } from './observe.ts';
 
 /**
- * One alert, as SupOps saw it. Today every row is sourced from a Slack message an
- * Alertmanager instance posted, but `source` leaves room for reading Prometheus or
- * Grafana directly later without a schema change.
+ * One alert, as SupOps saw it: from a Slack message an Alertmanager posted, read
+ * directly from a connection (`connectionId`), or raised by SupOps from a forecast.
  *
  * Dedup is by `(projectId, fingerprint)` while the alert is still open: a flapping
  * alert bumps `count`/`lastSeenAt` on the existing row instead of spawning a new
- * one, and a `resolved` notification flips the matching open row to `resolved`.
+ * one, and a resolve flips the matching open row to `resolved` (kept for history,
+ * cleaned up with the rest of the observability data).
  */
 export const alerts = sqliteTable(
   'alerts',
@@ -38,6 +40,14 @@ export const alerts = sqliteTable(
     /** The full source message, always kept so parsing can improve after the fact. */
     rawPayload: text('raw_payload', { mode: 'json' }).$type<unknown>(),
 
+    /** The connection it was read from, for alerts not relayed through Slack. */
+    connectionId: text('connection_id').references(() => targets.id, { onDelete: 'set null' }),
+    /** The incident this alert is part of. */
+    incidentId: text('incident_id').references(() => incidents.id, { onDelete: 'set null' }),
+    /** When the source says it started firing (Alertmanager's startsAt). */
+    startsAt: ts('starts_at'),
+    resolvedAt: ts('resolved_at'),
+
     slackTs: text('slack_ts'),
     slackPermalink: text('slack_permalink'),
 
@@ -52,7 +62,11 @@ export const alerts = sqliteTable(
     decidedAt: ts('decided_at'),
     decidedBy: text('decided_by').references(() => users.id),
   },
-  (t) => [index('alerts_project_status').on(t.projectId, t.status, t.receivedAt), index('alerts_run').on(t.runId)],
+  (t) => [
+    index('alerts_project_status').on(t.projectId, t.status, t.receivedAt),
+    index('alerts_run').on(t.runId),
+    index('alerts_incident').on(t.incidentId),
+  ],
 );
 
 /**

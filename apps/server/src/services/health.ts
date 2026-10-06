@@ -184,7 +184,7 @@ export const HEALTH_AGENT_SPECS: Record<HealthScanType, HealthAgentSpec> = {
  * Projects created before health mode existed only have triage/console, so a scan
  * would otherwise fail with "no health-check agent" -- this heals that transparently.
  */
-function ensureScanAgent(projectId: string, type: HealthScanType): typeof agents.$inferSelect {
+export function ensureScanAgent(projectId: string, type: HealthScanType): typeof agents.$inferSelect {
   const spec = HEALTH_AGENT_SPECS[type];
   const existing = db
     .select()

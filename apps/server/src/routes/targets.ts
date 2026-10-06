@@ -13,6 +13,7 @@ import {
 } from '@supops/db';
 import { applyMethodScript, diagnoseSecret, kubeCredentialFromInput, kubectlPing, parseHostAddresses, pinHostKey, safeGet, shellQuote, loadTarget, resolveBecomeSecrets, resolveSecret, sshExec } from '@supops/core';
 import { OBSERVABILITY_KINDS, isObservabilityKind } from '@supops/shared';
+import { watcher } from '../observe/watcher.ts';
 import type { ObservabilityConfig } from '@supops/db';
 import type { ResolvedTarget } from '@supops/core';
 import { db } from '../context.ts';
@@ -101,6 +102,8 @@ const observabilityConfig = z.object({
   indices: z.array(z.string().min(1).max(200)).max(50).optional(),
   maxRangeHours: z.number().int().min(1).max(24 * 31).optional(),
   datasourceUid: z.string().max(100).regex(/^[A-Za-z0-9_-]+$/).optional(),
+  ingestAlerts: z.boolean().optional(),
+  watch: z.boolean().optional(),
 });
 
 /** Credentials for an observability connection; stored encrypted as JSON. */
@@ -210,6 +213,8 @@ targetRoutes.post('/', (req, res) => {
       })
       .returning()
       .get();
+    // Start watching and reading alerts from it now, not at the next tick.
+    watcher.kick();
     res.status(201).json(publicTarget(row));
     return;
   }
