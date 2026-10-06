@@ -3,7 +3,7 @@ import { and, desc, eq, sql } from 'drizzle-orm';
 import { z } from 'zod';
 import { agents, alerts } from '@supops/db';
 import type { AlertStatus } from '@supops/shared';
-import { loadTargets, matchTargetsByHost, withJumps } from '@supops/core';
+import { loadTargets, scopeAlert } from '@supops/core';
 import { db } from '../context.ts';
 import { startRun } from '../services/start-run.ts';
 
@@ -67,10 +67,18 @@ alertRoutes.get('/count', (req, res) => {
   res.json({ new: row?.n ?? 0 });
 });
 
-/** The label keys we try, in order, when scoping the investigation to a host. */
-const HOST_LABEL_KEYS = ['instance', 'host', 'node', 'hostname'];
+interface ScopeNote {
+  slugs: string[];
+  reason: string;
+  by: 'label' | 'text' | 'channel' | null;
+}
 
-function buildAlertTask(alert: typeof alerts.$inferSelect): string {
+/**
+ * The run's task. `scope` names the machine(s) the alert resolved to and how, so
+ * the agent starts there instead of rediscovering it -- the rest of the scope (the
+ * jump, the machines behind it) is there so it can reach them, not to be swept.
+ */
+function buildAlertTask(alert: typeof alerts.$inferSelect, scope?: ScopeNote): string {
   const labels = (alert.labels as Record<string, string> | null) ?? {};
   const notable = Object.entries(labels)
     .filter(([k]) => !k.startsWith('_') && !['summary', 'description'].includes(k))
@@ -82,6 +90,11 @@ function buildAlertTask(alert: typeof alerts.$inferSelect): string {
     `Alert: ${alert.title}`,
     alert.summary ? `Details: ${alert.summary}` : '',
     notable ? `Labels: ${notable}` : '',
+    scope?.by === 'channel'
+      ? `SupOps narrowed this run using ${scope.reason}; the alert does not name a machine, so work out which one it is about from the alert before checking anything.`
+      : scope
+        ? `SupOps matched this alert to ${scope.slugs.join(', ')} using ${scope.reason}. Start there; if the evidence points to another machine in scope, say so and confirm it first.`
+        : '',
     'Investigate the root cause on the affected host and remediate where it is safe to do so. If remediation is risky, stop and explain what you would do.',
   ]
     .filter(Boolean)
@@ -104,32 +117,23 @@ alertRoutes.post('/:id/investigate', (req, res) => {
     return;
   }
 
-  // Scope the run to the smallest set of targets we can justify, in priority order:
-  //   1. a target whose host/slug matches the alert's instance label (most precise)
-  //   2. failing that, targets whose env or slug appears in the channel name -- e.g.
-  //      "#acme-prod-alerts" scopes to the prod target, not every host
-  //   3. failing both, all targets (the agent decides from the alert text)
+  // Scope the run the way a person would in Investigate (see scopeAlert): the machine
+  // the alert names, plus its jump or the machines behind it so they are reachable.
+  // No match leaves the scope empty, which gives the run every target.
   const available = loadTargets(db, alert.projectId);
-  const labels = (alert.labels as Record<string, string> | null) ?? {};
-  const hostValue = HOST_LABEL_KEYS.map((k) => labels[k]).find(Boolean)?.trim();
-
-  // Matched on every name a target is known by (slug, address, jump alias, recorded
-  // hostnames/IPs), so `ip-10-1-2-3.ec2.internal` or `10.1.2.3:9100` finds the machine.
-  let matches = hostValue ? matchTargetsByHost(available, hostValue) : [];
-
-  if (matches.length === 0 && alert.channelName) {
-    const words = new Set(alert.channelName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean));
-    matches = available.filter((t) => words.has(t.slug.toLowerCase()) || words.has(String(t.env).toLowerCase()));
-  }
-
-  // Machines behind a jump bring the jump with them: the problem may be on the jump itself.
-  if (matches.length) matches = withJumps(matches, available);
+  const scope = scopeAlert(
+    { labels: alert.labels as Record<string, string> | null, title: alert.title, summary: alert.summary, channelName: alert.channelName },
+    available,
+  );
+  const matches = scope.targets;
   const targetIds = matches.length > 0 ? matches.map((t) => t.id) : undefined;
+  // Name what the alert itself pointed at, not the jump or siblings added for reach.
+  const named = scope.matched.slice(0, 6).map((t) => t.slug);
 
   const result = startRun({
     projectId: alert.projectId,
     agentId: triage.id,
-    task: buildAlertTask(alert),
+    task: buildAlertTask(alert, scope.reason ? { slugs: named, reason: scope.reason, by: scope.by } : undefined),
     targetIds,
     trigger: 'alert',
     triggerPayload: { alertId: alert.id, fingerprint: alert.fingerprint },

@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import type { TargetConfig } from '@supops/db';
-import { hostForms, matchTargetsByHost, parseHostAddresses, withJumps } from './host-match.ts';
+import { hostCandidates, hostForms, matchTargetsByHost, matchTargetsEmbedded, parseHostAddresses, scopeAlert, withJumps, withMachinesBehind } from './host-match.ts';
 
 const ssh = (id: string, slug: string, extra: Record<string, unknown> = {}) => ({
   id, slug, kind: 'ssh',
@@ -41,6 +41,67 @@ test('a scope with machines behind a jump also includes the jump', () => {
   assert.deepEqual(withJumps([behindB, cluster], all).map((t) => t.slug), ['logstore1', 'prod', 'jumphost']);
   assert.deepEqual(withJumps([cluster], all).map((t) => t.slug), ['prod']);
   assert.deepEqual(withJumps([jump, behindA], all).map((t) => t.slug), ['jumphost', 'worker1']);
+});
+
+test('a scoped jump brings the machines behind it, as the Investigate picker does', () => {
+  assert.deepEqual(withMachinesBehind([jump], all).map((t) => t.slug), ['jumphost', 'worker1', 'logstore1']);
+  assert.deepEqual(withMachinesBehind([behindA, cluster], all).map((t) => t.slug), ['worker1', 'prod']);
+});
+
+const envd = all.map((t) => ({ ...t, env: t.kind === 'k8s' ? 'staging' : 'prod' }));
+const alert = (o: Partial<Parameters<typeof scopeAlert>[0]>) => ({ labels: {}, title: 'HostHighLoad', summary: null, channelName: null, ...o });
+const slugs = (r: { targets: Array<{ slug: string }> }) => r.targets.map((t) => t.slug).sort();
+
+test('an alert matched to the jump can still reach the machines behind it', () => {
+  const r = scopeAlert(alert({ labels: { instance: '10.0.4.20:9100' } }), envd);
+  assert.deepEqual(r.matched.map((t) => t.slug), ['jumphost']);
+  assert.deepEqual(slugs(r), ['jumphost', 'logstore1', 'worker1']);
+  assert.equal(r.by, 'label');
+});
+
+test('an alert about one machine behind a jump scopes to it and its jump, not its siblings', () => {
+  const r = scopeAlert(alert({ labels: { instance: 'ip-10-0-4-40.ec2.internal' } }), envd);
+  assert.deepEqual(slugs(r), ['jumphost', 'worker1']);
+});
+
+test('with no host label, a machine named in the alert text is found', () => {
+  const r = scopeAlert(alert({ title: 'HostOutOfDiskSpace', summary: 'Disk is almost full on logstore1 (/ at 95%)' }), envd);
+  assert.deepEqual(r.matched.map((t) => t.slug), ['logstore1']);
+  assert.deepEqual(slugs(r), ['jumphost', 'logstore1']);
+  assert.equal(r.by, 'text');
+});
+
+test('a machine whose name is embedded in a longer one in the alert is found', () => {
+  const coder = ssh('c', 'coderunner', { via: { alias: 'coderunner' } });
+  const bastion = ssh('u', 'bastion');
+  const pool = [bastion, coder, behindB].map((t) => ({ ...t, env: 'staging' }));
+  // The alert carries only an IP no target has recorded, and the instance's AWS name.
+  const r = scopeAlert(
+    alert({ title: 'HostOutOfDiskSpace', labels: { instance: '10.0.7.15:9100', name: 'acme-code-runner-restored' }, channelName: '#acme-alerts' }),
+    pool,
+  );
+  assert.deepEqual(r.matched.map((t) => t.slug), ['coderunner']);
+  assert.equal(r.by, 'text');
+  assert.deepEqual(slugs(r), ['bastion', 'coderunner'], 'its jump comes too, its siblings do not');
+  // Short names are never matched inside other words: "acme" alone would not count.
+  assert.ok(!matchTargetsEmbedded([ssh('a', 'acme')], ['acme-code-runner-restored']).length);
+});
+
+test('the channel name narrows to an environment, and a jump there brings its machines', () => {
+  // "prod" is both the machines' environment and the cluster's slug, so all of them.
+  const r = scopeAlert(alert({ channelName: '#acme-prod-alerts' }), envd);
+  assert.deepEqual(slugs(r), ['jumphost', 'logstore1', 'prod', 'worker1']);
+  assert.equal(r.by, 'channel');
+});
+
+test('nothing recognisable leaves the run unscoped', () => {
+  const r = scopeAlert(alert({ summary: 'something went wrong somewhere', channelName: '#general' }), envd);
+  assert.deepEqual(r.targets, []);
+  assert.equal(r.reason, null);
+});
+
+test('host candidates are the host-like words of the text', () => {
+  assert.deepEqual(hostCandidates('Disk full on `web-1` (10.0.4.40:9100), 95%'), ['Disk', 'full', 'web-1', '10.0.4.40:9100']);
 });
 
 test('host addresses are parsed from hostname output, without loopback or link-local', () => {
