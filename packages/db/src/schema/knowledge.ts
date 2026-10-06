@@ -65,7 +65,8 @@ export const runKnowledge = sqliteTable(
     docId: text('doc_id')
       .notNull()
       .references(() => knowledgeDocs.id, { onDelete: 'cascade' }),
-    via: text('via').$type<'pinned' | 'matched' | 'runbook'>().notNull(),
+    /** pinned/matched/runbook: given at the start. read: the agent chose to read it (read_knowledge). */
+    via: text('via').$type<'pinned' | 'matched' | 'runbook' | 'read'>().notNull(),
     createdAt: createdAt(),
   },
   (t) => [index('run_knowledge_run').on(t.runId), index('run_knowledge_doc').on(t.docId)],

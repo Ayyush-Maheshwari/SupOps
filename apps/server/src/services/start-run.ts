@@ -1,4 +1,4 @@
-import { eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import { saveImages, userContent } from './attachments.ts';
 import { agents, knowledgeDocs, projects, runKnowledge, runs } from '@supops/db';
 import type { RunTrigger } from '@supops/shared';
@@ -11,6 +11,7 @@ import {
   buildOpeningMessage,
   buildSystemPrompt,
   loadTargets,
+  KNOWLEDGE_TOOL_KEYS,
   netCheckTool,
   NETWORK_TARGET,
 } from '@supops/core';
@@ -99,9 +100,22 @@ export function startRun(input: StartRunInput): StartRunResult {
   // Cluster targets are just another way to reach infrastructure: an agent allowed to
   // run commands on machines (ssh_exec) may run kubectl on clusters too. Agents saved
   // before cluster targets existed get it here rather than via a data migration.
-  const resolved = registry.resolve(effectiveToolKeys(agent.toolKeys ?? null));
+  const resolved = registry
+    .resolve(effectiveToolKeys(agent.toolKeys ?? null))
+    .filter((d) => !KNOWLEDGE_TOOL_KEYS.includes(d.key) && !(input.unattended && d.key === 'confirm_target'));
   const networkChecks = advisory && input.networkChecks !== false;
-  const tools = advisory ? (networkChecks ? bindTools([netCheckTool as never], [NETWORK_TARGET]) : []) : bindTools(input.unattended ? resolved.filter((d) => d.key !== 'confirm_target') : resolved, targets);
+  // Every run whose project has approved knowledge can search and read it, whatever the
+  // agent's own tool list: the agent chooses which documents fit, instead of relying on
+  // the few that were matched into the opening message.
+  const hasKnowledge = !!db
+    .select({ id: knowledgeDocs.id })
+    .from(knowledgeDocs)
+    .where(and(eq(knowledgeDocs.projectId, projectId), eq(knowledgeDocs.status, 'approved')))
+    .get();
+  const knowledgeTools = hasKnowledge ? KNOWLEDGE_TOOL_KEYS.map((k) => registry.get(k)!).filter(Boolean) : [];
+  const tools = advisory
+    ? bindTools([...(networkChecks ? [netCheckTool as never] : []), ...knowledgeTools], [NETWORK_TARGET])
+    : bindTools([...resolved, ...knowledgeTools], targets);
   const targetSummaries = targets.map((t) => ({
     slug: t.slug,
     kind: t.kind,

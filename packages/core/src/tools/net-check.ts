@@ -34,7 +34,7 @@ export const NETWORK_TARGET: ResolvedTarget = {
   kind: 'http',
   env: 'dev',
   sensitivity: 0,
-  description: 'The SupOps server itself. Network checks run from here, not from the operator\'s network.',
+  description: 'SupOps itself: network checks run from here (not from the operator\'s network), and project knowledge is read here.',
   config: { kind: 'http', baseUrl: 'http://supops-server.invalid', allowPrivateNetwork: false },
   credentialId: null,
   protectedPaths: null,

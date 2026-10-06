@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { eq } from 'drizzle-orm';
 import { knowledgeDocs, projects } from '@supops/db';
 import { freshDb } from '../engine/harness.test-util.ts';
-import { buildKnowledgeContext, ftsQuery, scopeMatches, searchKnowledge } from './retrieve.ts';
+import { buildKnowledgeContext, ftsQuery, readRunKnowledge, scopeMatches, searchKnowledge, searchRunKnowledge } from './retrieve.ts';
 
 function setup() {
   const db = freshDb();
@@ -74,4 +74,32 @@ test('the full-text index follows edits and deletes', () => {
   assert.equal(searchKnowledge(db, projectId, 'apache').length, 1);
   db.delete(knowledgeDocs).where(eq(knowledgeDocs.id, d.id)).run();
   assert.equal(searchKnowledge(db, projectId, 'apache').length, 0);
+});
+
+test('every other approved document is listed in an index the agent can choose from', () => {
+  const { db, projectId, add } = setup();
+  add({ slug: 'db-primary', title: 'Primary database', body: 'db-1 is the postgres primary', kind: 'fact', pinned: true });
+  add({ slug: 'kafka-lag', title: 'Kafka consumer lag', body: 'scale the consumers', kind: 'runbook' });
+  add({ slug: 'cert-renewal', title: 'Renew TLS certificates', body: 'certbot renew', kind: 'runbook' });
+  add({ slug: 'draft', title: 'Draft note', body: 'x', status: 'draft' });
+  add({ slug: 'dev-only', title: 'Dev box', body: 'y', scope: { envs: ['dev'] } });
+  const ctx = buildKnowledgeContext(db, { projectId, scope, task: 'something unrelated' });
+  assert.match(ctx.block, /read in full with read_knowledge/);
+  assert.match(ctx.block, /- Kafka consumer lag \[kafka-lag, runbook\]/);
+  assert.match(ctx.block, /- Renew TLS certificates \[cert-renewal, runbook\]/);
+  assert.doesNotMatch(ctx.block, /Draft note|Dev box/, 'drafts and out-of-scope documents are not offered');
+  assert.doesNotMatch(ctx.block, /\[db-primary, fact\]/, 'a document already given in full is not indexed again');
+  assert.ok(!ctx.used.some((u) => u.via === 'matched'), 'listing a document is not using it');
+});
+
+test('the knowledge tools read only approved documents in the run scope', () => {
+  const { db, projectId, add } = setup();
+  add({ slug: 'kafka-lag', title: 'Kafka consumer lag', body: 'Scale the consumer group.', kind: 'runbook' });
+  add({ slug: 'draft', title: 'Kafka draft', body: 'kafka secret plan', status: 'draft' });
+  add({ slug: 'dev-only', title: 'Kafka on dev', body: 'kafka dev', scope: { envs: ['dev'] } });
+  assert.deepEqual(searchRunKnowledge(db, { projectId, scope, query: 'kafka' }).map((h) => h.slug), ['kafka-lag']);
+  assert.equal(readRunKnowledge(db, { projectId, scope, slug: 'kafka-lag' })?.body, 'Scale the consumer group.');
+  assert.equal(readRunKnowledge(db, { projectId, scope, slug: 'draft' }), null);
+  assert.equal(readRunKnowledge(db, { projectId, scope, slug: 'dev-only' }), null);
+  assert.equal(readRunKnowledge(db, { projectId, scope: 'all', slug: 'dev-only' })?.title, 'Kafka on dev', 'advisory runs read every approved document');
 });

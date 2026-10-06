@@ -127,7 +127,7 @@ export interface Run {
   /** Present on the list endpoint: who approved/rejected this run's gated steps. */
   approvals?: RunApprovals;
   /** The policy frozen at start; `advisory` marks a run with no system access. */
-  policySnapshot?: { advisory?: boolean; unattended?: boolean };
+  policySnapshot?: { advisory?: boolean; unattended?: boolean; networkChecks?: boolean };
 }
 
 export interface ToolCall {
@@ -195,6 +195,8 @@ export interface RunDetail {
   steps: RunStep[];
   toolCalls: ToolCall[];
   events: Array<{ seq: number; type: string; payload: Record<string, unknown> }>;
+  /** Project knowledge the run was given, and how each document was chosen. */
+  knowledge?: Array<{ docId: string; via: 'pinned' | 'matched' | 'runbook'; title: string; kind: string }>;
 }
 
 export interface PendingApproval {

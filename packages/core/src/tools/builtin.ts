@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { readKnowledgeTool, searchKnowledgeTool } from './knowledge.ts';
 import { TARGET_KINDS } from '@supops/shared';
 import { alertsTool, queryLogsTool, queryMetricsTool } from './observability.ts';
 import type { RiskContribution } from '@supops/shared';
@@ -325,8 +326,13 @@ export function createDefaultRegistry(): ToolRegistry {
     .register(kubectlTool as unknown as ToolDef<never>)
     .register(queryMetricsTool as unknown as ToolDef<never>)
     .register(queryLogsTool as unknown as ToolDef<never>)
-    .register(alertsTool as unknown as ToolDef<never>);
+    .register(alertsTool as unknown as ToolDef<never>)
+    .register(searchKnowledgeTool as unknown as ToolDef<never>)
+    .register(readKnowledgeTool as unknown as ToolDef<never>);
 }
+
+/** Given to every run whose project has approved knowledge, whatever the agent's tool list. */
+export const KNOWLEDGE_TOOL_KEYS = ['search_knowledge', 'read_knowledge'];
 
 export const BUILTIN_TOOL_KEYS = ['ssh_exec', 'ssh_read_file', 'k8s_kubectl', 'query_metrics', 'query_logs', 'alerts', 'record_finding', 'confirm_target'];
 

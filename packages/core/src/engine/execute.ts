@@ -1,6 +1,6 @@
 import type { Db } from '@supops/db';
 import type { ToolOutput } from '@supops/db';
-import type { ResolvedTarget, ResolvedTool } from '../tools/types.ts';
+import type { KnowledgeAccess, ResolvedTarget, ResolvedTool } from '../tools/types.ts';
 import { errOutput, redactSecrets, redactTokenPatterns } from '../tools/output.ts';
 import { pinHostKey, pinnedHostKey, resolveBecomeSecrets, resolveSecret } from './targets.ts';
 import { hashArgs, targetFingerprint } from './canonical.ts';
@@ -22,6 +22,8 @@ export interface ExecuteParams {
   projectId: string;
   toolsSnapshotKeys: string[];
   signal: AbortSignal;
+  /** For knowledge tools: the run's approved knowledge, scoped by the engine. */
+  knowledge?: KnowledgeAccess;
 }
 
 export class ToolExecutionRefused extends Error {
@@ -116,6 +118,7 @@ export async function executeToolCall(
       timeoutMs: tool.def.timeoutFor ? tool.def.timeoutFor(parsed.data as never) : tool.def.timeoutMs,
       maxOutputBytes: deps.maxOutputBytes,
       signal,
+      ...(params.knowledge ? { knowledge: params.knowledge } : {}),
       ...(deps.onChunk ? { onChunk: deps.onChunk } : {}),
       onNewHostKey: (fp) => pinHostKey(deps.db, target.id, fp),
     });

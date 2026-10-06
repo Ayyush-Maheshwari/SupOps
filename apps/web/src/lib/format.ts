@@ -180,15 +180,19 @@ export const ALERT_STATUS_STYLE: Record<string, { label: string; text: string; d
 };
 
 /**
- * The first user message of a run is the engine's opening message: Project / Targets
- * / Task, with one block of internal orchestration scaffolding -- the "IMPORTANT: do
- * NOT check these machines one by one ... call confirm_target ... Run NOTHING until
- * approved" direction the engine gives the model. Keep the structure the operator
- * expects; strip only that block. Follow-up messages contain no such block and pass
- * through unchanged.
+ * The first user message of a run is the engine's opening message: project, targets,
+ * mode, the project knowledge given to the agent (often pages of excerpts), and last
+ * the operator's task. What the operator wrote is only the part after "Task:"; the
+ * rest is context for the model. Split them so the page can show the task plainly and
+ * the context as a short summary. Follow-ups have no such framing and pass through.
  */
-export const cleanTask = (content: string): string =>
-  content.replace(/\n {2}IMPORTANT:[\s\S]*?(?=\n\n|$)/g, '');
+export function splitOpening(content: string): { task: string; context: string | null } {
+  const m = content.match(/^Project: [^\n]*\n[\s\S]*?\n\nTask:\n([\s\S]*)$/);
+  return m ? { task: m[1]!.trim(), context: content.slice(0, content.length - m[1]!.length).replace(/\n\nTask:\n$/, '').trim() } : { task: content, context: null };
+}
+
+/** The operator's own words from a run's opening message (see splitOpening). */
+export const cleanTask = (content: string): string => splitOpening(content).task;
 
 /**
  * Where a target lives, for display: `user@host` for a machine, `k8s · host · ns` for a

@@ -98,16 +98,21 @@ const commandOf = (line: string) => {
 
 /** What each verdict means for someone about to paste the line into a terminal. */
 const VERDICT: Record<RiskTier, string> = {
-  read_only: 'only looks',
+  read_only: 'read-only',
   low: 'low risk',
-  medium: 'changes something',
-  high: 'risky change',
-  forbidden: 'never run this',
+  medium: 'changes',
+  high: 'risky',
+  forbidden: 'never run',
 };
+
+/** One code line's height, shared by the code and the verdict column so they line up. */
+const ROW = 'h-5 leading-5';
 
 /**
  * A shell block. In an advisory run each command is rated by the risk engine -- the
  * same verdict a live run would get -- since the reader is the one who will run it.
+ * The verdicts sit in their own column beside the code, so a long command scrolls
+ * under nothing and the labels never mix with what is to be copied.
  */
 function ShellBlock({ text }: { text: string }) {
   const rate = useContext(RateCommands);
@@ -121,41 +126,44 @@ function ShellBlock({ text }: { text: string }) {
     staleTime: Infinity,
   });
   let k = 0;
+  const verdicts = lines.map((line) => (commandOf(line) && rate ? ratings.data?.[k++] : undefined));
+
   return (
-    <div className="group/sh relative">
-      <code className="block overflow-x-auto whitespace-pre rounded-lg border border-hairline bg-ground/70 px-3 py-2 pr-9 font-mono text-xs leading-relaxed text-ink">
-        {lines.map((line, i) => {
-          const cmd = commandOf(line);
-          const r = cmd && rate ? ratings.data?.[k++] : undefined;
-          return (
-            <span key={i} className={clsx('flex items-baseline gap-3', !cmd && line.trim() && 'text-muted')}>
-              <span className="min-w-0 flex-1">{line || ' '}</span>
-              {r && (
-                <span
-                  title={r.recognised ? r.reason : 'The risk engine does not know this command, so a live run would ask before running it. Check what it does first.'}
-                  className={clsx('shrink-0 font-sans text-[10px] uppercase tracking-wide', r.recognised ? TIER_STYLE[r.tier].text : 'text-muted')}
-                >
-                  {r.recognised ? VERDICT[r.tier] : 'not recognised'}
-                </span>
-              )}
+    <div className="group/sh flex overflow-hidden rounded-lg border border-hairline bg-ground/70">
+      <div className="relative min-w-0 flex-1">
+        <code className="block overflow-x-auto whitespace-pre px-3 py-2 pr-9 font-mono text-xs text-ink">
+          {lines.map((line, i) => (
+            <span key={i} className={clsx('block', ROW, !commandOf(line) && line.trim() && 'text-muted')}>{line || ' '}</span>
+          ))}
+        </code>
+        <button
+          type="button"
+          onClick={async () => {
+            if (await copyText(commands.join('\n') || text)) {
+              setCopied(true);
+              setTimeout(() => setCopied(false), 1500);
+            }
+          }}
+          className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded bg-ground/80 text-muted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/sh:opacity-100"
+          title="Copy the commands"
+          aria-label="Copy the commands"
+        >
+          {copied ? <Check size={12} /> : <Copy size={12} />}
+        </button>
+      </div>
+      {rate && commands.length > 0 && (
+        <div aria-label="Risk of each command" className="shrink-0 select-none border-l border-hairline bg-tile-2/40 px-2.5 py-2 text-right font-sans text-[10px] uppercase tracking-wide">
+          {verdicts.map((r, i) => (
+            <span
+              key={i}
+              className={clsx('block whitespace-nowrap', ROW, r ? (r.recognised ? TIER_STYLE[r.tier].text : 'text-muted') : '')}
+              title={r ? (r.recognised ? r.reason : 'The risk engine does not know this command, so a live run would ask before running it. Check what it does first.') : undefined}
+            >
+              {r ? (r.recognised ? VERDICT[r.tier] : 'unknown') : ' '}
             </span>
-          );
-        })}
-      </code>
-      <button
-        type="button"
-        onClick={async () => {
-          if (await copyText(commands.join('\n') || text)) {
-            setCopied(true);
-            setTimeout(() => setCopied(false), 1500);
-          }
-        }}
-        className="absolute right-1.5 top-1.5 grid h-6 w-6 place-items-center rounded text-muted opacity-0 transition-opacity hover:text-ink focus:opacity-100 group-hover/sh:opacity-100"
-        title="Copy the commands"
-        aria-label="Copy the commands"
-      >
-        {copied ? <Check size={12} /> : <Copy size={12} />}
-      </button>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

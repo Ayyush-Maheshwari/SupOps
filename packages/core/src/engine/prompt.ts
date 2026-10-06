@@ -68,7 +68,7 @@ In this run you cannot log in to, run commands on, or change any host, cluster o
 
 /** Appended after ADVISORY_PROMPT when the run may use net_check. */
 export const NETWORK_CHECKS_PROMPT = `NETWORK CHECKS
-You have one tool, net_check, which runs read-only checks from the SupOps server: http (like curl), ping, tcp (port open + banner), dns, tls (certificate), traceroute and whois.
+You can use net_check, which runs read-only checks from the SupOps server: http (like curl), ping, tcp (port open + banner), dns, tls (certificate), traceroute and whois.
 - Use it for what can be observed from outside: is the URL up and what does it return, does the name resolve and to what, is the certificate valid and when does it expire, is the port open, is the domain registered and when does it expire. Check before you speculate, one thing at a time, and cite the result.
 - The checks run from the SupOps server, not from the operator's network. A failure may be specific to that vantage point (a firewall, private DNS); say so rather than concluding the service is down for everyone, and give the operator the equivalent command to run from their side.
 - Internal addresses (10.x, 172.16-31.x, 192.168.x, localhost, *.internal) need allow_private: true and wait for a person's approval; only ask for that when the task is clearly about that address. Never scan ranges or sweep ports.

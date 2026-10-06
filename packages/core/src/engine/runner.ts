@@ -1,12 +1,14 @@
-import { and, asc, eq } from 'drizzle-orm';
+import { and, asc, eq, sql } from 'drizzle-orm';
 import type { ChatMessage, ToolCallRequest, ToolMessage } from '@supops/shared';
 import { isTerminalToolCall, tierAtMost } from '@supops/shared';
 import type { Db, RunBudget } from '@supops/db';
-import { DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_SESSION_TOOL_CALLS, agents, projects, toolCalls as toolCallsTable } from '@supops/db';
+import { DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_SESSION_TOOL_CALLS, agents, knowledgeDocs, projects, runKnowledge, toolCalls as toolCallsTable } from '@supops/db';
 import type { LLMClient } from '../llm/client.ts';
 import { backoffMs } from '../llm/client.ts';
 import { FatalLLMError, RetryableLLMError } from '../llm/errors.ts';
-import type { ResolvedTool } from '../tools/types.ts';
+import type { KnowledgeAccess, ResolvedTool, ToolDef } from '../tools/types.ts';
+import { KNOWLEDGE_TOOL_KEYS } from '../tools/builtin.ts';
+import { readRunKnowledge, searchRunKnowledge, type RunScope } from '../knowledge/retrieve.ts';
 import { bindTools, effectiveToolKeys, type ToolRegistry } from '../tools/registry.ts';
 import { assessRisk } from '../risk/index.ts';
 import type { EventSink, OutputSink } from './events.ts';
@@ -334,6 +336,7 @@ export class Engine {
           projectId: run.projectId,
           toolsSnapshotKeys: run.toolsSnapshot.map((t) => t.function.name),
           signal,
+          ...(KNOWLEDGE_TOOL_KEYS.includes(current.toolKey) ? { knowledge: this.knowledgeAccess(run, ctx.knowledgeScope) } : {}),
         },
       );
     } catch (err) {
@@ -569,16 +572,20 @@ export class Engine {
     const inScope = new Set(run.targetsSnapshot.map((t) => t.slug));
     const targets = loadTargets(this.db, run.projectId).filter((t) => inScope.has(t.slug));
     const snapshotKeys = run.toolsSnapshot.map((t) => t.function.name);
-    // An advisory run was started with no tools on purpose; an empty snapshot must
-    // not fall back to the agent's tool list below.
-    // An advisory run has no targets; its only possible tool is net_check, on the
-    // virtual SupOps-server target, and only if the run was started with it.
+    // An advisory run has no targets. Its only tools -- net_check if it was started
+    // with network checks, and the knowledge tools -- act on the virtual SupOps-server
+    // target. An empty snapshot must not fall back to the agent's tool list below.
     if (run.policySnapshot.advisory) {
-      const checks = run.policySnapshot.networkChecks && snapshotKeys.includes(netCheckTool.key);
+      const keys = new Set(snapshotKeys);
+      const defs = [
+        ...(run.policySnapshot.networkChecks && keys.has(netCheckTool.key) ? [netCheckTool as never as ToolDef<never>] : []),
+        ...KNOWLEDGE_TOOL_KEYS.filter((k) => keys.has(k)).map((k) => this.registry.get(k)).filter((d): d is NonNullable<typeof d> => !!d),
+      ];
       return {
         budget: agent.budget,
         killSwitch: project.killSwitch,
-        tools: checks ? bindTools([netCheckTool as never], [NETWORK_TARGET]) : [],
+        tools: bindTools(defs, [NETWORK_TARGET]),
+        knowledgeScope: 'all',
       };
     }
     const defs = snapshotKeys.length
@@ -589,6 +596,41 @@ export class Engine {
       budget: agent.budget,
       killSwitch: project.killSwitch,
       tools: bindTools(defs, targets),
+      // The same scope the opening message's knowledge was chosen by.
+      knowledgeScope: {
+        targetIds: targets.map((t) => t.id),
+        kinds: [...new Set(targets.map((t) => t.kind))],
+        envs: [...new Set(targets.map((t) => t.env))],
+      },
+    };
+  }
+
+  /**
+   * What the knowledge tools may see: the project's approved documents in this run's
+   * scope. A document the agent reads is recorded on the run (and counted as used),
+   * so the run page and the document both show it.
+   */
+  private knowledgeAccess(run: RunRow, scope: RunScope | 'all'): KnowledgeAccess {
+    return {
+      search: (query) => searchRunKnowledge(this.db, { projectId: run.projectId, scope, query }),
+      read: (slug) => {
+        const d = readRunKnowledge(this.db, { projectId: run.projectId, scope, slug });
+        if (!d) return null;
+        const seen = this.db
+          .select({ id: runKnowledge.id })
+          .from(runKnowledge)
+          .where(and(eq(runKnowledge.runId, run.id), eq(runKnowledge.docId, d.id)))
+          .get();
+        if (!seen) {
+          this.db.insert(runKnowledge).values({ runId: run.id, docId: d.id, via: 'read' }).run();
+          this.db
+            .update(knowledgeDocs)
+            .set({ useCount: sql`${knowledgeDocs.useCount} + 1`, lastUsedAt: new Date() })
+            .where(eq(knowledgeDocs.id, d.id))
+            .run();
+        }
+        return { slug: d.slug, title: d.title, kind: d.kind, body: d.body, source: d.source ?? null };
+      },
     };
   }
 
@@ -658,6 +700,7 @@ interface RunContext {
   budget: RunBudget;
   killSwitch: boolean;
   tools: ResolvedTool[];
+  knowledgeScope: RunScope | 'all';
 }
 
 /** Models emit malformed JSON often enough that this must never throw. */

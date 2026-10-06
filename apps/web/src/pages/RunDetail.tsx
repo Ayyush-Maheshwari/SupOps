@@ -4,12 +4,12 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import { THREAT_LABEL, messageText } from '@supops/shared';
 import {
-  AlertTriangle, ArrowLeft, Ban, Bot, Check, ChevronRight, CircleSlash, Pin, PinOff,
+  AlertTriangle, ArrowLeft, Ban, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleSlash, Pin, PinOff,
   Radio, Server, ShieldAlert, Terminal, User, X,
 } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useRunStream } from '../lib/useRunStream';
-import { cleanTask, duration, timeAgo } from '../lib/format';
+import { cleanTask, duration, splitOpening, timeAgo } from '../lib/format';
 import { CommandBlock, Panel, RiskBadge, Spinner, StatusPill } from '../components/ui';
 import { Markdown } from '../components/Markdown';
 import { RiskBar } from '../components/viz';
@@ -104,6 +104,7 @@ export function RunDetail() {
   }
 
   const callsById = new Map(detail.data.toolCalls.map((c) => [c.toolCallId, c]));
+  const openingId = detail.data.steps.find((s) => s.messageJson.role === 'user')?.id;
 
   // The header shows only the entry point(s) and machines actually acted on -- not
   // the whole frozen scope, which for a jump can be dozens of machines and reads as
@@ -226,8 +227,17 @@ export function RunDetail() {
 
           if (m.role === 'user') {
             return (
-              <Bubble key={step.id} icon={<User size={15} />} tint="text-cyan" label="Task">
+              <Bubble key={step.id} icon={<User size={15} />} tint="text-cyan" label={step.id === openingId ? 'Task' : 'You'}>
                 <UserContent runId={run.id} content={m.content} clean={cleanTask} />
+                {step.id === openingId && (
+                  <RunContext
+                    context={splitOpening(messageText(m.content)).context}
+                    advisory={advisory}
+                    networkChecks={!!run.policySnapshot?.networkChecks}
+                    targets={primary}
+                    knowledge={detail.data.knowledge ?? []}
+                  />
+                )}
               </Bubble>
             );
           }
@@ -286,6 +296,55 @@ export function RunDetail() {
         <ScrollJump />
       </div>
     </>
+  );
+}
+
+/**
+ * What the agent was given besides the task, in one line: the mode or targets, the
+ * runbook it follows, and which knowledge documents it read. The full opening text
+ * (every excerpt) stays one click away rather than filling the page.
+ */
+function RunContext({ context, advisory, networkChecks, targets, knowledge }: {
+  context: string | null;
+  advisory: boolean;
+  networkChecks: boolean;
+  targets: string[];
+  knowledge: Array<{ docId: string; via: string; title: string; kind: string }>;
+}) {
+  const [open, setOpen] = useState(false);
+  if (!context) return null;
+  const runbook = knowledge.find((k) => k.via === 'runbook');
+  const docs = knowledge.filter((k) => k.via !== 'runbook');
+  const shown = docs.slice(0, 5);
+  return (
+    <div className="mt-3 border-t border-hairline pt-2.5 text-[11px] text-muted">
+      <div className="flex flex-wrap items-center gap-x-3 gap-y-1.5">
+        <span>
+          {advisory ? `Advisory${networkChecks ? ' · network checks on' : ' · no network checks'}` : targets.length ? `Targets: ${targets.join(', ')}` : 'All targets'}
+        </span>
+        {runbook && (
+          <span className="inline-flex items-center gap-1 text-ink"><BookOpen size={11} className="text-cyan" /> Following {runbook.title}</span>
+        )}
+        {!!docs.length && (
+          <span className="inline-flex flex-wrap items-center gap-1">
+            Knowledge:
+            {shown.map((k) => (
+              <Link key={k.docId} to="/knowledge" title={k.via === 'pinned' ? 'Always given (pinned)' : 'Matched the task'} className="chip border border-edge bg-tile-2 hover:text-ink">
+                {k.title}
+              </Link>
+            ))}
+            {docs.length > shown.length && <span>+{docs.length - shown.length} more</span>}
+          </span>
+        )}
+        {!runbook && !docs.length && <span>No knowledge matched</span>}
+        <button type="button" onClick={() => setOpen((v) => !v)} className="ml-auto inline-flex items-center gap-1 hover:text-ink" aria-expanded={open}>
+          <ChevronDown size={12} className={clsx('transition-transform', open && 'rotate-180')} /> {open ? 'Hide' : 'Full context'}
+        </button>
+      </div>
+      {open && (
+        <pre className="mt-2 max-h-80 overflow-auto whitespace-pre-wrap rounded-inner border border-hairline bg-ground/40 p-3 font-mono text-[11px] leading-relaxed text-muted">{context}</pre>
+      )}
+    </div>
   );
 }
 

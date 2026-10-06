@@ -10,3 +10,4 @@ export * from './kube-credential.ts';
 export * from './observability.ts';
 export * from './executors/http.ts';
 export { netCheckTool, NETWORK_TARGET, isNetworkTarget } from './net-check.ts';
+export { readKnowledgeTool, searchKnowledgeTool } from './knowledge.ts';

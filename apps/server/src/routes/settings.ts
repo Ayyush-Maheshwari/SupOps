@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import { z } from 'zod';
-import { LLMClient } from '@supops/core';
+import { KNOWLEDGE_TOOL_KEYS, LLMClient } from '@supops/core';
 import { applyLlmSettings, llm, registry, settingsStore } from '../context.ts';
 import { isAdmin } from '../auth.ts';
 import { audit } from '../services/audit.ts';
@@ -71,7 +71,8 @@ settingsRoutes.post('/llm/test', async (req, res) => {
 
 settingsRoutes.get('/tools', (_req, res) => {
   res.json(
-    registry.keys().map((key) => {
+    // The knowledge tools are given to every run automatically, so they are not a choice.
+    registry.keys().filter((key) => !KNOWLEDGE_TOOL_KEYS.includes(key)).map((key) => {
       const def = registry.get(key)!;
       return {
         key,

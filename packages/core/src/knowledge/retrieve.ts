@@ -25,6 +25,9 @@ export const PINNED_CHARS = 6000;
 export const EXCERPT_CHARS = 600;
 export const MATCHES = 3;
 export const RUNBOOK_CHARS = 12_000;
+/** The index of every other document: one line each, so the agent can choose what to read. */
+export const INDEX_ENTRIES = 80;
+export const INDEX_CHARS = 5_000;
 
 export function scopeMatches(scope: KnowledgeScope | null | undefined, run: RunScope): boolean {
   if (!scope) return true;
@@ -119,6 +122,27 @@ export function buildKnowledgeContext(
     for (const d of matched) used.push({ docId: d.id, via: 'matched' });
   }
 
+  // Everything else, one line each: the agent decides which documents have steps that
+  // fit and reads them in full with read_knowledge, rather than being limited to the
+  // pinned facts and the top few text matches above.
+  const given = new Set(used.map((u) => u.docId));
+  const rest = approved.filter((d) => !given.has(d.id)).sort((a, b) => a.kind.localeCompare(b.kind) || a.title.localeCompare(b.title));
+  const index: string[] = [];
+  let room = INDEX_CHARS;
+  for (const d of rest.slice(0, INDEX_ENTRIES)) {
+    const line = `- ${d.title} [${d.slug}, ${d.kind}]`;
+    if (line.length > room) break;
+    room -= line.length;
+    index.push(line);
+  }
+  if (index.length) {
+    const more = rest.length - index.length;
+    parts.push(
+      `Other documents you can read in full with read_knowledge (or find with search_knowledge)${more > 0 ? `; ${more} more not listed` : ''}. ` +
+        `Before you diagnose or propose steps, read any whose title fits the problem -- a runbook for this situation is the first thing to follow:\n${index.join('\n')}`,
+    );
+  }
+
   if (!parts.length) return { block: '', used };
   return {
     block:
@@ -126,4 +150,38 @@ export function buildKnowledgeContext(
       parts.join('\n\n'),
     used,
   };
+}
+
+/** Approved documents a run may read: the same scope rule as the opening message. */
+function readable(db: Db, projectId: string, scope: RunScope | 'all'): Doc[] {
+  return db
+    .select()
+    .from(knowledgeDocs)
+    .where(and(eq(knowledgeDocs.projectId, projectId), eq(knowledgeDocs.status, 'approved')))
+    .all()
+    .filter((d) => scope === 'all' || scopeMatches(d.scope, scope));
+}
+
+export interface KnowledgeHit {
+  slug: string;
+  title: string;
+  kind: string;
+  snippet: string;
+}
+
+/**
+ * search_knowledge: full-text matches among the documents this run may read, best
+ * first. Words in titles and tags count most, as in the opening-message search.
+ */
+export function searchRunKnowledge(db: Db, i: { projectId: string; scope: RunScope | 'all'; query: string; limit?: number }): KnowledgeHit[] {
+  const allowed = new Set(readable(db, i.projectId, i.scope).map((d) => d.id));
+  return searchKnowledge(db, i.projectId, i.query, 50)
+    .filter((d) => allowed.has(d.id))
+    .slice(0, i.limit ?? 8)
+    .map((d) => ({ slug: d.slug, title: d.title, kind: d.kind, snippet: d.snippet }));
+}
+
+/** read_knowledge: one document in full, if this run may read it. */
+export function readRunKnowledge(db: Db, i: { projectId: string; scope: RunScope | 'all'; slug: string }): Doc | null {
+  return readable(db, i.projectId, i.scope).find((d) => d.slug === i.slug.trim().toLowerCase()) ?? null;
 }

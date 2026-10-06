@@ -31,7 +31,15 @@ export interface ResolvedTarget {
   becomeSecrets?: Array<{ user: string; value: string }>;
 }
 
+/** Read-only access to a run's approved knowledge, supplied by the engine (see tools/knowledge.ts). */
+export interface KnowledgeAccess {
+  search(query: string): Array<{ slug: string; title: string; kind: string; snippet: string }>;
+  read(slug: string): { slug: string; title: string; kind: string; body: string; source: string | null } | null;
+}
+
 export interface ExecContext {
+  /** Only for knowledge tools; absent elsewhere. */
+  knowledge?: KnowledgeAccess;
   runId: string;
   toolCallId: string;
   target: ResolvedTarget;

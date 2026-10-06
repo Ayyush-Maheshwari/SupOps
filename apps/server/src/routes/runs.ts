@@ -6,6 +6,7 @@ import {
   agents,
   knowledgeDocs,
   projects,
+  runKnowledge,
   runAttachments,
   runFeedback,
   targets,
@@ -238,6 +239,14 @@ runRoutes.get('/:id', (req, res) => {
     // not an opaque id.
     toolCalls: withApproverNames(calls),
     events: db.select().from(runEvents).where(eq(runEvents.runId, run.id)).orderBy(asc(runEvents.seq)).all(),
+    // Which project knowledge the run was given, so the page can name it instead of
+    // printing every excerpt from the opening message.
+    knowledge: db
+      .select({ docId: runKnowledge.docId, via: runKnowledge.via, title: knowledgeDocs.title, kind: knowledgeDocs.kind })
+      .from(runKnowledge)
+      .innerJoin(knowledgeDocs, eq(runKnowledge.docId, knowledgeDocs.id))
+      .where(eq(runKnowledge.runId, run.id))
+      .all(),
   });
 });
 
