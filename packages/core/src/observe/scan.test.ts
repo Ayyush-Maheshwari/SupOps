@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { ResolvedTarget } from '../tools/types.ts';
-import { scanSignal, seriesFilterQuery } from './scan.ts';
+import { scanSignal, seriesFilterQuery, seriesFilterQueryMany } from './scan.ts';
 import { assessSeries } from './vulnerability.ts';
 
 const HOUR = 3_600_000;
@@ -100,4 +100,10 @@ test('over a limit is a breach, worse when still moving the wrong way', () => {
   const rising = assessSeries({ key: 'k', labels: {}, value: 78.5, deriv6h: 0.001, deriv1d: 0.001 }, used, []);
   assert.equal(rising.score, 90);
   assert.match(rising.reasons[0]!, /still rising/);
+});
+
+test('several series can be picked out at once, for a combined graph', () => {
+  const q = seriesFilterQueryMany('x', [{ instance: 'a' }, { instance: 'b', mountpoint: '/' }]);
+  assert.equal(q, '(x) and on(instance, mountpoint) (label_replace(label_replace(vector(1), "instance", "a", "", ""), "mountpoint", "", "", "") or label_replace(label_replace(vector(1), "instance", "b", "", ""), "mountpoint", "/", "", ""))');
+  assert.equal(seriesFilterQueryMany('x', [{ instance: 'a' }]), seriesFilterQuery('x', { instance: 'a' }));
 });

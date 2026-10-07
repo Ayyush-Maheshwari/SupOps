@@ -6,7 +6,7 @@ import { ChevronDown, Pencil, Plus, Search, X } from 'lucide-react';
 import { formatValue } from '@supops/shared';
 import { api, patch, post } from '../lib/api';
 import { Empty, Panel, Segmented, Spinner, Switch } from './ui';
-import { LineChart } from './viz';
+import { LineChart, seriesColor } from './viz';
 import type { AtRiskItem, ObsConnection, SeriesChartData, Watch, WatchItem } from '../lib/types';
 
 /**
@@ -16,12 +16,16 @@ import type { AtRiskItem, ObsConnection, SeriesChartData, Watch, WatchItem } fro
  */
 
 const GROUPS: Array<{ key: Watch['group']; label: string }> = [
+  // Your own signals first: they are what you chose to watch.
+  { key: 'custom', label: 'Custom' },
   { key: 'resources', label: 'Resources' },
   { key: 'kubernetes', label: 'Kubernetes' },
   { key: 'traffic', label: 'Traffic' },
   { key: 'stack', label: 'Monitoring stack' },
-  { key: 'custom', label: 'Custom' },
 ];
+
+/** What a headline's first graph shows: one item, one signal combined, or (null) the worst. */
+type Focus = { kind: 'item'; id: string } | { kind: 'signal'; watchId: string } | null;
 
 /** One thing being watched: a series of a signal. */
 interface Item extends WatchItem {
@@ -61,8 +65,8 @@ export function SignalsView({
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<Watch | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  /** Per headline: the item chosen in its list. */
-  const [picked, setPicked] = useState<Record<string, string>>({});
+  /** Per headline: what its first graph is focused on. */
+  const [focus, setFocus] = useState<Record<string, Focus>>({});
   const metricConns = connections.filter((c) => c.kind === 'prometheus' || c.kind === 'grafana');
 
   const groups = useMemo(() => {
@@ -83,7 +87,7 @@ export function SignalsView({
   }
 
   const pick = (group: Watch['group'], id: string) => {
-    setPicked((p) => ({ ...p, [group]: id }));
+    setFocus((p) => ({ ...p, [group]: { kind: 'item', id } }));
     document.getElementById(`signals-${group}`)?.scrollIntoView({ behavior: 'smooth', block: 'start' });
   };
 
@@ -123,8 +127,8 @@ export function SignalsView({
           id={`signals-${g.key}`}
           label={g.label}
           watches={g.watches}
-          picked={picked[g.key] ?? null}
-          onPick={(id) => setPicked((p) => ({ ...p, [g.key]: id }))}
+          focus={focus[g.key] ?? null}
+          onFocus={(f) => setFocus((p) => ({ ...p, [g.key]: f }))}
           onEdit={(w) => { setEditing(w); setNote(null); }}
         />
       ))}
@@ -164,13 +168,13 @@ function ResetLink({ watch, onDone }: { watch: Watch; onDone: (msg: string) => v
 // ---- one headline ---------------------------------------------------------------------
 
 function GroupSection({
-  id, label, watches, picked, onPick, onEdit,
+  id, label, watches, focus, onFocus, onEdit,
 }: {
   id: string;
   label: string;
   watches: Watch[];
-  picked: string | null;
-  onPick: (id: string) => void;
+  focus: Focus;
+  onFocus: (f: Focus) => void;
   onEdit: (w: Watch) => void;
 }) {
   const [by, setBy] = useState<'signal' | 'machine'>('signal');
@@ -183,15 +187,25 @@ function GroupSection({
   const needle = q.trim().toLowerCase();
   const visible = needle ? ranked.filter((i) => `${i.watch.title} ${i.name} ${i.target ?? ''}`.toLowerCase().includes(needle)) : ranked;
 
-  // The graphs: what was picked (or the worst), and the worst of the rest.
-  const first = items.find((i) => i.id === picked) ?? ranked[0];
-  const second = ranked.find((i) => i.id !== first?.id);
+  // Click an item: its own graph. Click it again: its signal across every machine.
+  const pickItem = (i: Item) => onFocus(focus?.kind === 'item' && focus.id === i.id ? { kind: 'signal', watchId: i.watch.id } : { kind: 'item', id: i.id });
+  // Click a signal's name: it combined. Click again: back to the two worst.
+  const pickSignal = (w: Watch) => onFocus(focus?.kind === 'signal' && focus.watchId === w.id ? null : { kind: 'signal', watchId: w.id });
+
+  const focusedItem = focus?.kind === 'item' ? items.find((i) => i.id === focus.id) : undefined;
+  const focusedWatch = focus?.kind === 'signal' ? watches.find((w) => w.id === focus.watchId) : undefined;
+  const first = focusedItem ?? (focusedWatch ? undefined : ranked[0]);
+  const second = ranked.find((i) => i.id !== first?.id && (!focusedWatch || i.watch.id !== focusedWatch.id)) ?? (focusedWatch ? undefined : ranked.find((i) => i.id !== first?.id));
+  const selectedId = focusedItem?.id ?? null;
 
   return (
     <section id={id} className="scroll-mt-4">
       <div className="mb-2 flex flex-wrap items-baseline gap-x-3 px-1">
         <h3 className="text-[11px] font-semibold uppercase tracking-wider text-muted">{label}</h3>
         <span className="text-[11px] text-dim">{items.length} watched · {watches.length} signal{watches.length === 1 ? '' : 's'}</span>
+        {focus && (
+          <button className="ml-auto text-[11px] text-blue-text hover:underline" onClick={() => onFocus(null)}>Back to the two worst</button>
+        )}
       </div>
       <div className="tile grid gap-0 lg:grid-cols-[minmax(0,5fr)_minmax(0,7fr)]">
         {/* Everything under this headline */}
@@ -206,18 +220,35 @@ function GroupSection({
           <div className="max-h-[440px] overflow-y-auto overscroll-contain">
             {by === 'signal'
               ? [...watches].sort((a, b) => (b.series[0]?.score ?? -1) - (a.series[0]?.score ?? -1)).map((w) => (
-                  <SignalGroup key={w.id} watch={w} items={visible.filter((i) => i.watch.id === w.id)} picked={first?.id ?? null} onPick={onPick} onEdit={() => onEdit(w)} searching={!!needle} />
+                  <SignalGroup
+                    key={w.id}
+                    watch={w}
+                    items={visible.filter((i) => i.watch.id === w.id)}
+                    selected={selectedId}
+                    combined={focusedWatch?.id === w.id}
+                    onPick={pickItem}
+                    onSignal={() => pickSignal(w)}
+                    onEdit={() => onEdit(w)}
+                    searching={!!needle}
+                  />
                 ))
               : machineGroups(visible).map(([machine, rows]) => (
-                  <ItemGroup key={machine} title={machine} items={rows} picked={first?.id ?? null} onPick={onPick} label={(i) => i.watch.title} searching={!!needle} />
+                  <ItemGroup key={machine} title={machine} items={rows} selected={selectedId} onPick={pickItem} label={(i) => i.watch.title} searching={!!needle} />
                 ))}
             {!visible.length && <p className="px-4 py-6 text-center text-xs text-muted">Nothing matches.</p>}
           </div>
+          <p className="border-t border-hairline px-3 py-2 text-[10.5px] text-dim">Click an item for its graph, again for its signal across all machines. Click a signal's name for all its machines.</p>
         </div>
 
-        {/* The two nearest to trouble -- or what was picked */}
+        {/* The two nearest to trouble -- or what was chosen */}
         <div className="grid min-w-0 content-start gap-0 divide-y divide-hairline">
-          {first ? <ChartSlot key={first.id} item={first} picked={first.id === picked} /> : <p className="p-6 text-sm text-muted">No data yet.</p>}
+          {focusedWatch ? (
+            <CombinedSlot key={`c-${focusedWatch.id}`} watch={focusedWatch} />
+          ) : first ? (
+            <ChartSlot key={first.id} item={first} picked={!!focusedItem} />
+          ) : (
+            <p className="p-6 text-sm text-muted">No data yet.</p>
+          )}
           {second && <ChartSlot key={second.id} item={second} picked={false} />}
         </div>
       </div>
@@ -234,7 +265,18 @@ function machineGroups(items: Item[]): Array<[string, Item[]]> {
 
 const SHOWN = 6;
 
-function SignalGroup({ watch: w, items, picked, onPick, onEdit, searching }: { watch: Watch; items: Item[]; picked: string | null; onPick: (id: string) => void; onEdit: () => void; searching: boolean }) {
+function SignalGroup({
+  watch: w, items, selected, combined, onPick, onSignal, onEdit, searching,
+}: {
+  watch: Watch;
+  items: Item[];
+  selected: string | null;
+  combined: boolean;
+  onPick: (i: Item) => void;
+  onSignal: () => void;
+  onEdit: () => void;
+  searching: boolean;
+}) {
   const qc = useQueryClient();
   const toggle = useMutation({
     mutationFn: (enabled: boolean) => patch(`/observability/watches/${w.id}`, { enabled }),
@@ -244,10 +286,12 @@ function SignalGroup({ watch: w, items, picked, onPick, onEdit, searching }: { w
   return (
     <ItemGroup
       title={w.title}
+      onTitle={w.series.length > 1 ? onSignal : undefined}
+      titleActive={combined}
       sub={`${w.connection ?? ''}${w.seriesCount ? ` · ${w.seriesCount}` : ''}`}
       error={w.enabled && w.lastError ? w.lastError : null}
       items={items}
-      picked={picked}
+      selected={selected}
       onPick={onPick}
       label={(i) => i.name}
       searching={searching}
@@ -263,14 +307,17 @@ function SignalGroup({ watch: w, items, picked, onPick, onEdit, searching }: { w
 }
 
 function ItemGroup({
-  title, sub, error, items, picked, onPick, label, actions, searching, muted,
+  title, onTitle, titleActive, sub, error, items, selected, onPick, label, actions, searching, muted,
 }: {
   title: string;
+  /** Clicking the title shows this group combined. */
+  onTitle?: () => void;
+  titleActive?: boolean;
   sub?: string;
   error?: string | null;
   items: Item[];
-  picked: string | null;
-  onPick: (id: string) => void;
+  selected: string | null;
+  onPick: (i: Item) => void;
   label: (i: Item) => string;
   actions?: React.ReactNode;
   searching: boolean;
@@ -281,8 +328,19 @@ function ItemGroup({
   const shown = all || searching ? items : items.slice(0, SHOWN);
   return (
     <div className={clsx('border-b border-hairline last:border-b-0', muted && 'opacity-60')}>
-      <div className="sticky top-0 z-[1] flex items-center gap-2 bg-tile/95 px-3 py-2 backdrop-blur">
-        <span className="truncate text-[12px] font-medium text-ink">{title}</span>
+      <div className={clsx('sticky top-0 z-[1] flex items-center gap-2 px-3 py-2 backdrop-blur', titleActive ? 'bg-blue/15' : 'bg-tile/95')}>
+        {onTitle ? (
+          <button
+            className={clsx('truncate text-left text-[12px] font-medium hover:underline', titleActive ? 'text-blue-text' : 'text-ink')}
+            onClick={onTitle}
+            aria-pressed={titleActive}
+            title={titleActive ? 'Back to the two worst' : 'Show all machines together'}
+          >
+            {title}
+          </button>
+        ) : (
+          <span className="truncate text-[12px] font-medium text-ink">{title}</span>
+        )}
         {sub && <span className="truncate font-mono text-[10px] text-dim">{sub}</span>}
         <span className="ml-auto flex shrink-0 items-center gap-1.5">{actions}</span>
       </div>
@@ -291,11 +349,11 @@ function ItemGroup({
         {shown.map((i) => (
           <li key={i.id}>
             <button
-              onClick={() => onPick(i.id)}
-              aria-pressed={picked === i.id}
+              onClick={() => onPick(i)}
+              aria-pressed={selected === i.id}
               className={clsx(
                 'flex w-full items-center gap-2.5 px-3 py-1.5 text-left text-[12px] transition-colors hover:bg-white/[0.04]',
-                picked === i.id && 'bg-blue/10',
+                selected === i.id && 'bg-blue/10',
               )}
             >
               <span className={clsx('h-1.5 w-1.5 shrink-0 rounded-full', dot(i.score))} />
@@ -306,9 +364,9 @@ function ItemGroup({
           </li>
         ))}
       </ul>
-      {!all && !searching && items.length > SHOWN && (
-        <button className="flex w-full items-center gap-1 px-3 pb-2 pt-1 text-[11px] text-blue-text hover:underline" onClick={() => setAll(true)}>
-          <ChevronDown size={12} /> Show all {items.length}
+      {!searching && items.length > SHOWN && (
+        <button className="flex w-full items-center gap-1 px-3 pb-2 pt-1 text-[11px] text-blue-text hover:underline" onClick={() => setAll((v) => !v)} aria-expanded={all}>
+          <ChevronDown size={12} className={clsx('transition-transform', all && 'rotate-180')} /> {all ? 'Show less' : `Show all ${items.length}`}
         </button>
       )}
     </div>
@@ -365,6 +423,47 @@ function ChartSlot({ item, picked }: { item: Item; picked: boolean }) {
         </button>
       </div>
       {investigate.isError && <p className="mt-1 text-xs text-red">{(investigate.error as Error).message}</p>}
+    </div>
+  );
+}
+
+/** A signal across its machines: the worst ten together, with a legend. */
+function CombinedSlot({ watch: w }: { watch: Watch }) {
+  const [hours, setHours] = useState<'6' | '24' | '168'>('24');
+  const chart = useQuery({
+    queryKey: ['combinedChart', w.id, hours],
+    queryFn: () => api<{ unit: string; limit: Watch['limit']; total: number; series: Array<{ key: string; name: string; points: Array<[number, number]> }> }>(`/observability/watches/${w.id}/combined?hours=${hours}`),
+    staleTime: 60_000,
+  });
+  const d = chart.data;
+  return (
+    <div className="min-w-0 p-4">
+      <div className="mb-2 flex flex-wrap items-start gap-x-3 gap-y-1">
+        <div className="min-w-0 flex-1">
+          <div className="truncate text-[13px] font-medium text-ink">{w.title} · all machines</div>
+          <div className="mt-0.5 text-[11px] text-muted">
+            {d ? (d.series.length < d.total ? `The ${d.series.length} closest to trouble, of ${d.total}` : `${d.series.length} machines`) : ' '}
+          </div>
+        </div>
+        <Segmented label="Window" value={hours} onChange={setHours} options={[{ value: '6', label: '6h' }, { value: '24', label: '24h' }, { value: '168', label: '7d' }]} />
+      </div>
+      {chart.isLoading ? (
+        <div className="grid h-[200px] place-items-center"><Spinner /></div>
+      ) : chart.isError ? (
+        <p className="grid h-[200px] place-items-center text-xs text-red">{(chart.error as Error).message}</p>
+      ) : d ? (
+        <>
+          <LineChart height={200} unit={d.unit} limit={d.limit?.value ?? null} series={d.series.map((x) => ({ key: x.key, name: x.name, points: x.points }))} />
+          <ul className="mt-3 flex flex-wrap gap-x-4 gap-y-1">
+            {d.series.map((x, i) => (
+              <li key={x.key} className="flex max-w-full items-center gap-1.5 text-[11px] text-muted">
+                <span className="h-2 w-2 shrink-0 rounded-full" style={{ background: seriesColor(i) }} />
+                <span className="truncate">{x.name}</span>
+              </li>
+            ))}
+          </ul>
+        </>
+      ) : null}
     </div>
   );
 }

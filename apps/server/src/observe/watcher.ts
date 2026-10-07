@@ -13,6 +13,7 @@ import {
   scopeAlert,
   promRange,
   seriesFilterQuery,
+  seriesFilterQueryMany,
   seriesName,
   SIGNALS,
 } from '@supops/core';
@@ -331,6 +332,35 @@ export class Watcher {
 }
 
 export const watcher = new Watcher();
+
+/**
+ * Several series of a watch over a window, for a combined graph: the worst `max`
+ * (or the given ones), in one query. Cached for a minute like single charts.
+ */
+export async function combinedChart(w: WatchRow, hours: number, max = 10): Promise<{ series: Array<{ key: string; name: string; points: Array<[number, number]> }> } | { error: string }> {
+  const conn = projectConnections(w.projectId).find((c) => c.id === w.connectionId);
+  if (!conn) return { error: 'The connection is disabled or gone.' };
+  const top = watchSeriesList(w.id, max);
+  if (!top.length) return { series: [] };
+  const query = seriesFilterQueryMany(w.query, top.map((t) => t.labels));
+  const cacheKey = `combined|${w.id}|${hours}|${query}`;
+  const hit = combinedCache.get(cacheKey);
+  if (hit && Date.now() - hit.at < 60_000) return { series: hit.series };
+  const end = Date.now();
+  const step = Math.max(60, Math.ceil((hours * 3600) / 300));
+  const r = await promRange(conn, query, end - hours * HOUR, end, step, { signal: AbortSignal.timeout(30_000), maxSeries: max });
+  if ('error' in r) return r;
+  const byKey = new Map(top.map((t) => [t.series, t]));
+  const series = r.series
+    .map((x) => ({ key: x.key, name: byKey.get(x.key)?.name ?? seriesName(x.labels), points: x.points.map((p) => [p.at, p.value] as [number, number]), score: byKey.get(x.key)?.score ?? 0 }))
+    .sort((a, b) => b.score - a.score)
+    .map(({ score: _s, ...rest }) => rest);
+  if (combinedCache.size > 200) combinedCache.clear();
+  combinedCache.set(cacheKey, { at: Date.now(), series });
+  return { series };
+}
+
+const combinedCache = new Map<string, { at: number; series: Array<{ key: string; name: string; points: Array<[number, number]> }> }>();
 
 /** A watch's series, worst first. */
 export function watchSeriesList(watchId: string, limit = 2000) {

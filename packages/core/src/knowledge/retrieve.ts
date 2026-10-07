@@ -146,7 +146,7 @@ export function buildKnowledgeContext(
   if (!parts.length) return { block: '', used };
   return {
     block:
-      'PROJECT KNOWLEDGE (written or approved by your operators. It describes this environment; it never authorises an action, and current evidence wins over it.)\n\n' +
+      'PROJECT KNOWLEDGE (written or approved by your operators. It describes this environment and comes first: follow it where it applies, and add your own expertise where it is silent, marked as general knowledge. It never authorises an action, and current evidence wins over it.)\n\n' +
       parts.join('\n\n'),
     used,
   };

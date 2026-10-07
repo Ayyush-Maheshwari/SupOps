@@ -71,3 +71,20 @@ export function seriesFilterQuery(query: string, labels: Record<string, string>)
   for (const k of keys) v = `label_replace(${v}, "${k}", "${promString(labels[k]!).replace(/\$/g, '$$$$')}", "", "")`;
   return `(${query}) and on(${keys.join(', ')}) ${v}`;
 }
+
+/**
+ * The query narrowed to several of its series at once (for a combined graph): the
+ * same `and on(...)` as seriesFilterQuery, against the union of their label sets.
+ */
+export function seriesFilterQueryMany(query: string, labelSets: Array<Record<string, string>>): string {
+  if (!labelSets.length) return query;
+  if (labelSets.length === 1) return seriesFilterQuery(query, labelSets[0]!);
+  const keys = [...new Set(labelSets.flatMap((l) => Object.keys(l)))].filter((k) => k !== '__name__' && /^[A-Za-z_][A-Za-z0-9_]*$/.test(k)).sort();
+  if (!keys.length) return query;
+  const one = (labels: Record<string, string>) => {
+    let v = 'vector(1)';
+    for (const k of keys) v = `label_replace(${v}, "${k}", "${promString(labels[k] ?? '').replace(/\$/g, '$$$$')}", "", "")`;
+    return v;
+  };
+  return `(${query}) and on(${keys.join(', ')}) (${labelSets.map(one).join(' or ')})`;
+}

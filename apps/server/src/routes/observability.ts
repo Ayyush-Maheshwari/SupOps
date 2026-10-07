@@ -12,7 +12,7 @@ import { importsAlerts, projectConnections, watchesMetrics } from '../observe/co
 import { pollConnection, pollStatus } from '../observe/alert-poller.ts';
 import { mergeIncidents, reopenIncident, splitIncident } from '../observe/incidents.ts';
 import { enqueueTriage, gatherEvidence, latestFixRun, startIncidentRun } from '../observe/triage.ts';
-import { discover, reevaluateWatch, resolveWatchObservations, seriesChart, watchConnection, watcher, watchSeriesList } from '../observe/watcher.ts';
+import { combinedChart, discover, reevaluateWatch, resolveWatchObservations, seriesChart, watchConnection, watcher, watchSeriesList } from '../observe/watcher.ts';
 
 /**
  * Observability: incidents (grouped alerts and predictions), their evidence and
@@ -360,6 +360,22 @@ observabilityRoutes.get('/watches/:id/chart', async (req, res) => {
       : null,
     forecast: row?.etaMs != null && row.etaMs <= 7 * 86_400_000 && row.slopePerHour != null ? { slopePerHour: row.slopePerHour, etaMs: row.etaMs } : null,
   });
+});
+
+/** The worst series of a watch together, read live: a combined graph. */
+observabilityRoutes.get('/watches/:id/combined', async (req, res) => {
+  const w = db.select().from(watches).where(eq(watches.id, req.params.id)).get();
+  if (!w) {
+    res.status(404).json({ error: 'Watch not found' });
+    return;
+  }
+  const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 24));
+  const r = await combinedChart(w, hours, Math.min(20, Math.max(2, Number(req.query.max) || 10)));
+  if ('error' in r) {
+    res.status(502).json({ error: r.error });
+    return;
+  }
+  res.json({ unit: w.unit, limit: w.limit, total: w.seriesCount, series: r.series });
 });
 
 /**

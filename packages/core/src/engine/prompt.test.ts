@@ -30,3 +30,11 @@ test('incident runs: diagnosis and fix get their own instructions', () => {
   assert.ok(f.includes('INCIDENT -- FIX') && !f.includes('INCIDENT INVESTIGATION'));
   assert.ok(!buildSystemPrompt(null, 'agent').includes('INCIDENT'));
 });
+
+test('project documents come first; the model adds its own expertise, marked as such', () => {
+  const sys = buildSystemPrompt(null, 'agent');
+  assert.match(sys, /PROJECT KNOWLEDGE AND YOUR OWN/);
+  assert.match(sys, /come first and are binding/);
+  assert.match(sys, /mark it as general knowledge/);
+  assert.match(sys, /Facts about this environment .* never from general knowledge/);
+});
