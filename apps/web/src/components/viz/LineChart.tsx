@@ -17,6 +17,8 @@ export interface ChartSeries {
   /** Continue the line at `slopePerHour` until `untilMs` (or 24h). */
   forecast?: { slopePerHour: number; etaMs: number | null } | null;
   flagged?: boolean;
+  /** Its own colour, e.g. the one it has in a combined graph; else by position. */
+  color?: string;
 }
 
 const PALETTE = ['rgb(var(--blue))', 'rgb(var(--violet))', 'rgb(var(--cyan))', 'rgb(var(--green))', 'rgb(var(--amber))', 'rgb(var(--red))'];
@@ -128,7 +130,7 @@ export function LineChart({
         ))}
         {series.map((s, i) => s.band && (
           <rect key={`b-${s.key}`} x={x(s.points[0]?.[0] ?? t0)} width={Math.max(0, x(s.points[s.points.length - 1]?.[0] ?? t1) - x(s.points[0]?.[0] ?? t0))}
-            y={y(s.band.high)} height={Math.max(1, y(s.band.low) - y(s.band.high))} fill={seriesColor(i)} opacity={0.07} />
+            y={y(s.band.high)} height={Math.max(1, y(s.band.low) - y(s.band.high))} fill={s.color ?? seriesColor(i)} opacity={0.07} />
         ))}
         {limit !== undefined && limit !== null && limit >= lo && limit <= hi && (
           <line x1={0} x2={W} y1={y(limit)} y2={y(limit)} stroke="rgb(var(--red))" strokeOpacity={0.6} strokeDasharray="4 4" strokeWidth={1} vectorEffect="non-scaling-stroke" />
@@ -139,7 +141,7 @@ export function LineChart({
             key={s.key}
             points={s.points.map((p) => `${x(p[0])},${y(p[1])}`).join(' ')}
             fill="none"
-            stroke={seriesColor(i)}
+            stroke={s.color ?? seriesColor(i)}
             strokeWidth={highlight === s.key ? 2.6 : s.flagged ? 2.2 : series.length > 12 ? 1.2 : 1.5}
             strokeOpacity={highlight ? (highlight === s.key ? 1 : 0.12) : series.length > 4 && !s.flagged ? 0.75 : 1}
             strokeLinejoin="round"
@@ -153,7 +155,7 @@ export function LineChart({
           const end = geo.fcEnd;
           const v = last[1] + (s.forecast.slopePerHour * (end - last[0])) / 3_600_000;
           return (
-            <line key={`f-${s.key}`} x1={x(last[0])} y1={y(last[1])} x2={x(end)} y2={y(v)} stroke={seriesColor(i)} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+            <line key={`f-${s.key}`} x1={x(last[0])} y1={y(last[1])} x2={x(end)} y2={y(v)} stroke={s.color ?? seriesColor(i)} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
           );
         })}
         {hoverAt !== undefined && (
@@ -190,7 +192,7 @@ export function LineChart({
               <>
                 {shown.map(({ s, i, v }) => (
                   <div key={s.key} className={clsx('flex items-center gap-1.5', highlight && s.key !== highlight && 'opacity-60')}>
-                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: seriesColor(i) }} />
+                    <span className="h-2 w-2 shrink-0 rounded-[2px]" style={{ background: s.color ?? seriesColor(i) }} />
                     <span className="truncate text-muted">{s.name}</span>
                     <span className="ml-auto pl-2 font-mono text-ink">{formatValue(v, unit)}</span>
                   </div>
