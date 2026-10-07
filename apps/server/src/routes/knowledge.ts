@@ -8,6 +8,7 @@ import { db } from '../context.ts';
 import { audit } from '../services/audit.ts';
 import { getImportJob, startImport } from '../services/knowledge-import.ts';
 import { MAX_FILE_BYTES } from '../services/doc-extract.ts';
+import { enqueueDocForMap, mapDocument } from '../servicemap/docs.ts';
 
 /**
  * Project knowledge: runbooks, notes and facts the agent is given at the start of a
@@ -163,6 +164,8 @@ knowledgeRoutes.post('/import/save', (req, res) => {
       after: { slug: row.slug, kind: row.kind, title: row.title, source: row.source },
     });
   }
+  // Approved documents feed the service map (as suggestions to review).
+  if (approval.status === 'approved') for (const row of saved) enqueueDocForMap(row.id);
   res.status(201).json({ saved: saved.length, status: approval.status });
 });
 
@@ -219,6 +222,7 @@ knowledgeRoutes.post('/', (req, res) => {
     .returning()
     .get();
   audit(req.user, { projectId: row.projectId, entity: 'knowledge', entityId: row.id, action: admin ? 'create' : 'draft', after: { slug: row.slug, kind: row.kind, title: row.title } });
+  if (row.status === 'approved') enqueueDocForMap(row.id);
   res.status(201).json(row);
 });
 
@@ -242,6 +246,7 @@ knowledgeRoutes.patch('/:id', (req, res) => {
   }
   const row = db.update(knowledgeDocs).set({ ...parsed.data, updatedAt: new Date() }).where(eq(knowledgeDocs.id, doc.id)).returning().get();
   audit(req.user, { projectId: doc.projectId, entity: 'knowledge', entityId: doc.id, action: 'update', before: { title: doc.title, body: doc.body }, after: { title: row.title, body: row.body } });
+  if (row.status === 'approved' && (row.body !== doc.body || row.title !== doc.title)) enqueueDocForMap(row.id);
   res.json(row);
 });
 
@@ -262,6 +267,8 @@ function setStatus(status: 'approved' | 'draft' | 'archived', action: string) {
       return;
     }
     audit(req.user, { projectId: row.projectId, entity: 'knowledge', entityId: row.id, action });
+    // Approved: read for the map. Archived or back to draft: what only it said is suggested for removal.
+    enqueueDocForMap(row.id);
     res.json(row);
   };
 }
@@ -269,7 +276,7 @@ knowledgeRoutes.post('/:id/approve', setStatus('approved', 'approve'));
 knowledgeRoutes.post('/:id/archive', setStatus('archived', 'archive'));
 knowledgeRoutes.post('/:id/restore', setStatus('draft', 'restore'));
 
-knowledgeRoutes.delete('/:id', (req, res) => {
+knowledgeRoutes.delete('/:id', async (req, res) => {
   const doc = db.select().from(knowledgeDocs).where(eq(knowledgeDocs.id, req.params.id)).get();
   if (!doc) {
     res.status(404).json({ error: 'Document not found' });
@@ -278,6 +285,11 @@ knowledgeRoutes.delete('/:id', (req, res) => {
   if (!isAdmin(req.user) && !(doc.status === 'draft' && doc.createdBy === req.user?.id)) {
     res.status(403).json({ error: 'Only owners and admins can delete knowledge (you can delete your own drafts).' });
     return;
+  }
+  if (doc.status === 'approved') {
+    // What only this document said is suggested for removal before it goes.
+    db.update(knowledgeDocs).set({ status: 'archived' }).where(eq(knowledgeDocs.id, doc.id)).run();
+    await mapDocument(doc.id);
   }
   db.delete(knowledgeDocs).where(eq(knowledgeDocs.id, doc.id)).run();
   audit(req.user, { projectId: doc.projectId, entity: 'knowledge', entityId: doc.id, action: 'delete', before: { slug: doc.slug, title: doc.title } });

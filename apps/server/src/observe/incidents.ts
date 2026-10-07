@@ -4,6 +4,7 @@ import type { AlertSeverity } from '@supops/shared';
 import { OPEN_ALERT_STATUSES } from '@supops/shared';
 import { chooseIncident, groupKeyOf, loadTargets, scopeAlert, worstSeverity } from '@supops/core';
 import { db } from '../context.ts';
+import { mapRelation } from '../servicemap/context.ts';
 
 type AlertRow = typeof alerts.$inferSelect;
 type IncidentRow = typeof incidents.$inferSelect;
@@ -44,6 +45,8 @@ export function attachToIncident(alert: AlertRow): { incident: IncidentRow; crea
   const pick = chooseIncident(
     { title: alert.title, labels, targetIds, at: now },
     open.map((i) => ({ id: i.id, title: i.title, groupKey: i.groupKey ?? {}, targetIds: i.targetIds ?? [], lastSeenAt: i.lastSeenAt.getTime() })),
+    15 * 60_000,
+    (a, b) => mapRelation(alert.projectId, a, b),
   );
 
   if (pick) {

@@ -425,6 +425,11 @@ export interface IncidentDetail {
   observations: Observation[];
   run: { id: string; status: RunStatus; title: string; startedAt: string; endedAt: string | null } | null;
   fixRun: { id: string; status: RunStatus; startedAt: string } | null;
+  /** From the service map: what this incident's systems rely on, and what relies on them. */
+  map: {
+    dependsOn: Array<{ id: string; name: string; type: string; depth: number; certainty: string; problems: string[] }>;
+    affected: Array<{ id: string; name: string; type: string; depth: number; certainty: string; problems: string[] }>;
+  };
   timeline: Array<{ at: number; kind: string; text: string }>;
   mergeCandidates: Array<{ id: string; title: string }>;
 }

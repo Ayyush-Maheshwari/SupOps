@@ -342,7 +342,9 @@ export async function combinedChart(w: WatchRow, hours: number, max = 10): Promi
   if (!conn) return { error: 'The connection is disabled or gone.' };
   const top = watchSeriesList(w.id, max);
   if (!top.length) return { series: [] };
-  const query = seriesFilterQueryMany(w.query, top.map((t) => t.labels));
+  // All of them: the plain query, which stays short. Only a subset needs the (long) filter.
+  const all = top.length >= (w.seriesCount ?? 0);
+  const query = all ? w.query : seriesFilterQueryMany(w.query, top.map((t) => t.labels));
   const cacheKey = `combined|${w.id}|${hours}|${query}`;
   const hit = combinedCache.get(cacheKey);
   if (hit && Date.now() - hit.at < 60_000) return { series: hit.series };

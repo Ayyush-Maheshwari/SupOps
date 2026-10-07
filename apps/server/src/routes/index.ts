@@ -14,6 +14,7 @@ import { integrationRoutes } from './integrations.ts';
 import { maintenanceRoutes } from './maintenance.ts';
 import { knowledgeRoutes } from './knowledge.ts';
 import { observabilityRoutes } from './observability.ts';
+import { serviceMapRoutes } from './servicemap.ts';
 
 export const api = Router();
 
@@ -35,3 +36,4 @@ api.use('/integrations', integrationRoutes);
 api.use('/maintenance', maintenanceRoutes);
 api.use('/knowledge', knowledgeRoutes);
 api.use('/observability', observabilityRoutes);
+api.use('/service-map', serviceMapRoutes);

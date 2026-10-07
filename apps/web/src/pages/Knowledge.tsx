@@ -7,6 +7,7 @@ import { api, del, patch, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { timeAgo } from '../lib/format';
 import { PageHeader } from '../components/Layout';
+import { ServiceMap } from '../components/servicemap/ServiceMap';
 import { Markdown } from '../components/Markdown';
 import { Empty, Panel, Segmented, Spinner, Switch } from '../components/ui';
 import { KnowledgeImport } from '../components/KnowledgeImport';
@@ -49,6 +50,8 @@ export function Knowledge() {
   const [q, setQ] = useState('');
   const [selected, setSelected] = useState<string | 'new' | null>(null);
   const [importing, setImporting] = useState(false);
+  /** The service map at full width (the document list hides). */
+  const [mapExpanded, setMapExpanded] = useState(false);
   const [notice, setNotice] = useState<string | null>(null);
   const qc = useQueryClient();
 
@@ -97,8 +100,13 @@ export function Knowledge() {
           />
         </div>
       ) : (
-      <div className="grid gap-4 p-6 lg:grid-cols-5">
-        <div className="space-y-3 lg:col-span-2">
+      mapExpanded && !selected ? (
+        <div className="p-6">
+          <ServiceMap projectId={projectId!} isAdmin={isAdmin} expanded onToggleExpand={() => setMapExpanded(false)} />
+        </div>
+      ) : (
+      <div className="grid grid-cols-1 gap-4 p-6 lg:grid-cols-5">
+        <div className="min-w-0 space-y-3 lg:col-span-2">
           {notice && (
             <p className="flex items-center gap-2 rounded-inner border border-green/30 bg-green/10 px-3 py-2 text-xs text-green">
               <Check size={14} /> {notice}
@@ -163,8 +171,9 @@ export function Knowledge() {
           </Panel>
         </div>
 
-        <div className="lg:col-span-3">
-          {selected ? (
+        <div className="min-w-0 space-y-4 lg:col-span-3">
+          {/* An open document goes on top; the service map moves down, still there. */}
+          {selected && (
             <DocEditor
               key={selected}
               id={selected === 'new' ? null : selected}
@@ -172,13 +181,11 @@ export function Knowledge() {
               isAdmin={isAdmin}
               onClose={() => setSelected(null)}
             />
-          ) : (
-            <Panel>
-              <Empty icon={<BookOpen size={26} />} title="Select a document" hint="Or create one: a runbook the agent can follow, a note about your setup, or a short fact." />
-            </Panel>
           )}
+          <ServiceMap projectId={projectId!} isAdmin={isAdmin} expanded={false} onToggleExpand={() => { setSelected(null); setMapExpanded(true); }} />
         </div>
       </div>
+      )
       )}
     </>
   );

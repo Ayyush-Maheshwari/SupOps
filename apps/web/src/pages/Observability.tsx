@@ -248,9 +248,9 @@ function WatchForm({ projectId, connections, existing, onDone }: { projectId: st
         <button className="btn-primary" disabled={save.isPending || !form.title.trim() || !form.query.trim() || !form.connectionId || (!!form.limit.trim() && !Number.isFinite(Number(form.limit)))} onClick={() => save.mutate()}>
           {save.isPending ? <Spinner /> : <Sparkles size={14} />} {existing ? (save.isPending ? 'Saving and re-evaluating…' : 'Save') : 'Start watching'}
         </button>
-        {existing && <button className="btn-ghost" onClick={() => onDone()}>Cancel</button>}
+        <button className="btn-ghost" onClick={() => onDone()}>Cancel</button>
       </div>
     </>
   );
-  return existing ? <div>{body}</div> : <Panel title="Watch a query" accent="bg-blue" className="p-4"><div className="px-1">{body}</div></Panel>;
+  return <div>{body}</div>;
 }

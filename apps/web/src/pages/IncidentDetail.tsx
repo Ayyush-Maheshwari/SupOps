@@ -181,6 +181,33 @@ export function IncidentDetail() {
         )}
       </Panel>
 
+      {(d.data.map.dependsOn.length > 0 || d.data.map.affected.length > 0) && (
+        <Panel title="Connected systems" accent="bg-cyan" action={<Link to="/knowledge" className="text-[11px] text-blue-text hover:underline">Service map</Link>}>
+          <div className="grid gap-0 border-t border-hairline sm:grid-cols-2 sm:divide-x sm:divide-hairline">
+            {([['It relies on', d.data.map.dependsOn, 'A problem here is a likely origin.'], ['Affected if it is down', d.data.map.affected, 'What else feels this.']] as const).map(([title, rows, hint]) => (
+              <div key={title} className="px-5 py-3">
+                <div className="text-[11px] font-semibold uppercase tracking-wider text-dim">{title}</div>
+                <p className="text-[10.5px] text-dim">{hint}</p>
+                {rows.length ? (
+                  <ul className="mt-2 space-y-1">
+                    {rows.slice(0, 10).map((r) => (
+                      <li key={r.id} className="text-[12.5px]">
+                        <span className={clsx('mr-1.5 inline-block h-1.5 w-1.5 rounded-full', r.problems.length ? 'bg-red' : 'bg-green/70')} />
+                        <span className="text-ink">{r.name}</span>
+                        {r.depth > 1 && <span className="text-[10.5px] text-dim"> · {r.depth} steps</span>}
+                        {r.problems.map((p) => <span key={p} className="block pl-3 text-[11px] text-red">{p}</span>)}
+                      </li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="mt-2 text-xs text-muted">Nothing on the map.</p>
+                )}
+              </div>
+            ))}
+          </div>
+        </Panel>
+      )}
+
       <div className="grid gap-4 md:grid-cols-[1.4fr_1fr]">
         {/* Alerts */}
         <Panel

@@ -20,7 +20,8 @@ export interface ChartSeries {
 }
 
 const PALETTE = ['rgb(var(--blue))', 'rgb(var(--violet))', 'rgb(var(--cyan))', 'rgb(var(--green))', 'rgb(var(--amber))', 'rgb(var(--red))'];
-export const seriesColor = (i: number) => PALETTE[i % PALETTE.length]!;
+/** The theme's colours first; past them, hues spread by the golden angle so neighbours differ. */
+export const seriesColor = (i: number) => (i < PALETTE.length ? PALETTE[i]! : `hsl(${Math.round((i * 137.508) % 360)} 70% 62%)`);
 
 const W = 600;
 
@@ -32,6 +33,7 @@ export function LineChart({
   limit,
   className,
   empty = 'No samples yet',
+  highlight,
 }: {
   series: ChartSeries[];
   unit: string;
@@ -43,6 +45,8 @@ export function LineChart({
   className?: string;
   /** What to say when there is nothing to draw. */
   empty?: string;
+  /** Pick out one series: the others fade. */
+  highlight?: string | null;
 }) {
   const [hover, setHover] = useState<number | null>(null);
   const H = height;
@@ -129,14 +133,15 @@ export function LineChart({
         {limit !== undefined && limit !== null && limit >= lo && limit <= hi && (
           <line x1={0} x2={W} y1={y(limit)} y2={y(limit)} stroke="rgb(var(--red))" strokeOpacity={0.6} strokeDasharray="4 4" strokeWidth={1} vectorEffect="non-scaling-stroke" />
         )}
-        {series.map((s, i) => (
+        {/* The picked-out line is drawn last, on top of the rest. */}
+        {series.map((s, i) => [s, i] as const).sort((a, b) => Number(a[0].key === highlight) - Number(b[0].key === highlight)).map(([s, i]) => (
           <polyline
             key={s.key}
             points={s.points.map((p) => `${x(p[0])},${y(p[1])}`).join(' ')}
             fill="none"
             stroke={seriesColor(i)}
-            strokeWidth={s.flagged ? 2.2 : 1.5}
-            strokeOpacity={series.length > 4 && !s.flagged ? 0.75 : 1}
+            strokeWidth={highlight === s.key ? 2.6 : s.flagged ? 2.2 : series.length > 12 ? 1.2 : 1.5}
+            strokeOpacity={highlight ? (highlight === s.key ? 1 : 0.12) : series.length > 4 && !s.flagged ? 0.75 : 1}
             strokeLinejoin="round"
             strokeLinecap="round"
             vectorEffect="non-scaling-stroke"
@@ -176,13 +181,24 @@ export function LineChart({
       {hoverAt !== undefined && (
         <div className="pointer-events-none absolute right-2 top-2 max-w-[70%] rounded-inner border border-edge bg-tile/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur">
           <div className="mb-0.5 font-mono text-[10px] text-muted">{new Date(hoverAt).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
-          {series.slice(0, 6).map((s, i) => (
-            <div key={s.key} className="flex items-center gap-1.5">
-              <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: seriesColor(i) }} />
-              <span className="truncate text-muted">{s.name}</span>
-              <span className="ml-auto pl-2 font-mono text-ink">{formatValue(nearest(s, hoverAt)[1], unit)}</span>
-            </div>
-          ))}
+          {(() => {
+            // With many lines, the readout lists the picked-out one, then the highest values.
+            const rows = series.map((s, i) => ({ s, i, v: s.points.length ? nearest(s, hoverAt)[1] : NaN })).filter((r) => Number.isFinite(r.v));
+            rows.sort((a, b) => Number(b.s.key === highlight) - Number(a.s.key === highlight) || b.v - a.v);
+            const shown = rows.slice(0, 6);
+            return (
+              <>
+                {shown.map(({ s, i, v }) => (
+                  <div key={s.key} className={clsx('flex items-center gap-1.5', highlight && s.key !== highlight && 'opacity-60')}>
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: seriesColor(i) }} />
+                    <span className="truncate text-muted">{s.name}</span>
+                    <span className="ml-auto pl-2 font-mono text-ink">{formatValue(v, unit)}</span>
+                  </div>
+                ))}
+                {rows.length > shown.length && <div className="mt-0.5 text-[10px] text-dim">+{rows.length - shown.length} more</div>}
+              </>
+            );
+          })()}
         </div>
       )}
     </div>

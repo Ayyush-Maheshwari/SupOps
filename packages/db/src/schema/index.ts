@@ -11,3 +11,4 @@ export * from './health.ts';
 export * from './audit.ts';
 export * from './learning.ts';
 export * from './knowledge.ts';
+export * from './servicemap.ts';

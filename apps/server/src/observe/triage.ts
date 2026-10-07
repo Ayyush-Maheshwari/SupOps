@@ -7,6 +7,7 @@ import type { EvidenceItem } from '@supops/core';
 import { db, settingsStore } from '../context.ts';
 import { startRun } from '../services/start-run.ts';
 import { projectConnections } from './connections.ts';
+import { incidentMapBlock } from '../servicemap/context.ts';
 
 /**
  * What happens when an incident opens: gather the evidence pack (fixed read-only
@@ -117,6 +118,8 @@ export function evidenceBlock(inc: IncidentRow, members: AlertRow[], ev: Array<t
     lines.push('', 'EVIDENCE PACK: no metrics or logs connection could be checked for this incident.');
   }
   if (missing.length) lines.push(`Not measured here: ${[...new Set(missing.map((e) => e.title))].join(', ')}.`);
+  const mapLines = incidentMapBlock(inc.projectId, inc.targetIds ?? [], inc.id);
+  if (mapLines) lines.push('', mapLines);
   return lines.join('\n');
 }
 

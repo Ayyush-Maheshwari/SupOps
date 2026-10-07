@@ -20,6 +20,7 @@ import {
 import { isObservabilityKind } from '@supops/shared';
 import { db, engine, registry, settingsStore } from '../context.ts';
 import { observationContext } from '../observe/context.ts';
+import { serviceMapContext } from '../servicemap/context.ts';
 import { worker } from '../worker.ts';
 
 export interface StartRunInput {
@@ -208,6 +209,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     networkChecks,
     evidence: input.incident?.evidence,
     observations: observationContext(projectId, targets.map((t) => t.id)) ?? undefined,
+    serviceMap: serviceMapContext(projectId, targetIds?.length ? targets.map((t) => t.id) : []) ?? undefined,
   });
   const imageIds = input.images?.length ? saveImages(run.id, input.images, input.startedBy ?? null) : [];
   engine.store.appendStep(run.id, { role: 'user', content: userContent(opening, imageIds) });

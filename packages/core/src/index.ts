@@ -11,3 +11,4 @@ export * from './learning/signature.ts';
 export * from './knowledge/retrieve.ts';
 export * from './knowledge/import.ts';
 export * from './observe/index.ts';
+export * from './servicemap/index.ts';

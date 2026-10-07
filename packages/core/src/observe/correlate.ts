@@ -45,6 +45,8 @@ export function chooseIncident(
   alert: CorrelatableAlert,
   open: OpenIncidentRef[],
   windowMs = 15 * 60_000,
+  /** Are these machines connected (e.g. by the service map)? The reason, or null. */
+  related?: (alertTargets: string[], incidentTargets: string[]) => string | null,
 ): { incidentId: string; reason: string } | null {
   const key = groupKeyOf(alert);
   const recent = open
@@ -57,6 +59,7 @@ export function chooseIncident(
   const rules: Array<(i: OpenIncidentRef) => string | null> = [
     (i) => (alert.targetIds.length && i.targetIds.some((t) => alert.targetIds.includes(t)) ? 'both are about the same machine' : null),
     (i) => (key.host && i.groupKey.host === key.host ? `both are about ${key.host}` : null),
+    (i) => (related && alert.targetIds.length && i.targetIds.length ? related(alert.targetIds, i.targetIds) : null),
     (i) => (key.service && i.groupKey.service === key.service && (!key.namespace || !i.groupKey.namespace || key.namespace === i.groupKey.namespace)
       ? `both are about the ${key.service} service` : null),
     (i) => (i.groupKey.alertname === key.alertname ? `the same alert (${key.alertname}) is firing on several machines` : null),

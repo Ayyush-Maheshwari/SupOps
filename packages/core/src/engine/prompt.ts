@@ -161,8 +161,10 @@ export function buildOpeningMessage(params: {
   evidence?: string;
   /** What the watcher currently sees: anomalies and forecasts for these targets. */
   observations?: string;
+  /** How the in-scope systems connect (the service map). */
+  serviceMap?: string;
 }): string {
-  const extra = `${params.evidence ? `\n\n${params.evidence}` : ''}${params.observations ? `\n\n${params.observations}` : ''}`;
+  const extra = `${params.evidence ? `\n\n${params.evidence}` : ''}${params.serviceMap ? `\n\n${params.serviceMap}` : ''}${params.observations ? `\n\n${params.observations}` : ''}`;
   if (params.advisory) {
     const knowledge = params.knowledge
       ? `\n\n${params.knowledge}`

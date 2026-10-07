@@ -11,6 +11,7 @@ import { startRun } from '../services/start-run.ts';
 import { importsAlerts, projectConnections, watchesMetrics } from '../observe/connections.ts';
 import { pollConnection, pollStatus } from '../observe/alert-poller.ts';
 import { mergeIncidents, reopenIncident, splitIncident } from '../observe/incidents.ts';
+import { incidentMapView } from '../servicemap/context.ts';
 import { enqueueTriage, gatherEvidence, latestFixRun, startIncidentRun } from '../observe/triage.ts';
 import { combinedChart, discover, reevaluateWatch, resolveWatchObservations, seriesChart, watchConnection, watcher, watchSeriesList } from '../observe/watcher.ts';
 
@@ -164,6 +165,7 @@ observabilityRoutes.get('/incidents/:id', (req, res) => {
     observations: obs,
     run,
     fixRun: latestFixRun(inc.id),
+    map: incidentMapView(inc.projectId, inc.targetIds ?? [], inc.id),
     timeline,
     mergeCandidates: others,
   });
@@ -370,7 +372,8 @@ observabilityRoutes.get('/watches/:id/combined', async (req, res) => {
     return;
   }
   const hours = Math.min(168, Math.max(1, Number(req.query.hours) || 24));
-  const r = await combinedChart(w, hours, Math.min(20, Math.max(2, Number(req.query.max) || 10)));
+  // Up to every series a watch keeps (50): the page draws them all together.
+  const r = await combinedChart(w, hours, Math.min(50, Math.max(2, Number(req.query.max) || 10)));
   if ('error' in r) {
     res.status(502).json({ error: r.error });
     return;
