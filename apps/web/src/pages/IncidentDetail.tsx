@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Link, useNavigate, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { ArrowLeft, ChevronDown, ExternalLink, GitMerge, Play, RefreshCw, Scissors, ShieldCheck } from 'lucide-react';
+import { ArrowLeft, ChevronDown, ExternalLink, EyeOff, GitMerge, Play, RefreshCw, RotateCcw, Scissors, ShieldCheck } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { timeAgo } from '../lib/format';
-import { Empty, Panel, Spinner, StatusPill } from '../components/ui';
+import { Empty, Panel, Segmented, Spinner, StatusPill } from '../components/ui';
 import type { Evidence, IncidentDetail as Detail } from '../lib/types';
+import { SURE, VERDICT, verdictOf } from '../lib/observe-ui';
 
 const SEV_CHIP: Record<string, string> = {
   critical: 'border-red/40 bg-red/10 text-red',
@@ -49,6 +50,15 @@ export function IncidentDetail() {
   });
   const recheck = useMutation({ mutationFn: () => post(`/observability/incidents/${id}/evidence`, {}), onSuccess: invalidate });
   const resolve = useMutation({ mutationFn: () => post(`/observability/incidents/${id}/resolve`, {}), onSuccess: invalidate });
+  const ignore = useMutation({
+    mutationFn: (v: { hours: number; reason: string }) => post(`/observability/incidents/${id}/ignore`, v),
+    onSuccess: () => {
+      setIgnoring(false);
+      invalidate();
+    },
+  });
+  const reopen = useMutation({ mutationFn: () => post(`/observability/incidents/${id}/reopen`, {}), onSuccess: invalidate });
+  const [ignoring, setIgnoring] = useState(false);
   const merge = useMutation({ mutationFn: (into: string) => post(`/observability/incidents/${id}/merge`, { into }), onSuccess: () => navigate('/observability?tab=incidents') });
   const [splitting, setSplitting] = useState<Set<string> | null>(null);
   const split = useMutation({
@@ -65,7 +75,7 @@ export function IncidentDetail() {
   const cited = evidence.filter((e) => e.ref !== '-');
   const missing = evidence.filter((e) => e.ref === '-');
   const busy = inc.triageState === 'evidence' || inc.triageState === 'running';
-  const error = [investigate, recheck, resolve, merge, split].find((m) => m.isError)?.error as Error | undefined;
+  const error = [investigate, recheck, resolve, merge, split, ignore, reopen].find((m) => m.isError)?.error as Error | undefined;
 
   return (
     <div className="mx-auto w-full max-w-4xl space-y-4 px-4 pb-10 pt-5 sm:px-6">
@@ -73,9 +83,13 @@ export function IncidentDetail() {
 
       <header className="space-y-2">
         <div className="flex flex-wrap items-center gap-2">
+          {inc.status === 'open' && <span className={clsx('chip', VERDICT[verdictOf(inc)].chip)} title={VERDICT[verdictOf(inc)].hint}>{VERDICT[verdictOf(inc)].label}</span>}
           <span className={clsx('chip uppercase', SEV_CHIP[inc.severity])}>{inc.severity}</span>
-          <span className={clsx('text-xs', inc.status === 'open' ? 'text-amber' : 'text-green')}>{inc.status === 'open' ? 'Open' : 'Resolved'}</span>
-          {inc.origin === 'prediction' && <span className="text-xs text-amber">· predicted, nothing has failed yet</span>}
+          <span className={clsx('text-xs', inc.status === 'open' ? 'text-amber' : inc.status === 'ignored' ? 'text-muted' : 'text-green')}>
+            {inc.status === 'open' ? 'Open' : inc.status === 'ignored' ? 'Ignored' : 'Resolved'}
+          </span>
+          {inc.origin === 'prediction' && <span className="text-xs text-amber">· forecast, nothing has failed yet</span>}
+          {inc.origin === 'threshold' && <span className="text-xs text-amber">· over the limit set for it</span>}
           <span className="text-xs text-muted">· opened {timeAgo(inc.openedAt)}</span>
         </div>
         <h1 className="text-[22px] font-semibold leading-snug tracking-[-0.01em] text-ink">{inc.title}</h1>
@@ -103,9 +117,23 @@ export function IncidentDetail() {
             {recheck.isPending ? <Spinner /> : <RefreshCw size={14} />} Re-run checks
           </button>
           {inc.status === 'open' && (
-            <button className="btn-ghost !min-h-[36px]" disabled={resolve.isPending} onClick={() => resolve.mutate()}>Mark resolved</button>
+            <>
+              <button className="btn-ghost !min-h-[36px]" disabled={resolve.isPending} onClick={() => resolve.mutate()} title="Closes it now; if its alerts are in fact still firing they come back as a new incident">Mark resolved</button>
+              <button className="btn-ghost !min-h-[36px]" onClick={() => setIgnoring((v) => !v)} aria-expanded={ignoring}><EyeOff size={14} /> Ignore…</button>
+            </>
+          )}
+          {inc.status !== 'open' && !inc.mergedInto && (
+            <button className="btn-ghost !min-h-[36px]" disabled={reopen.isPending} onClick={() => reopen.mutate()}>{reopen.isPending ? <Spinner /> : <RotateCcw size={14} />} Reopen</button>
           )}
         </div>
+        {ignoring && <IgnoreForm busy={ignore.isPending} onCancel={() => setIgnoring(false)} onIgnore={(hours, reason) => ignore.mutate({ hours, reason })} />}
+        {inc.status === 'ignored' && (
+          <p className="rounded-inner border border-hairline bg-tile-2/60 px-3 py-2 text-xs leading-relaxed text-muted">
+            Ignored{inc.ignoredBy ? ` by ${inc.ignoredBy}` : ''}{inc.ignoreReason ? ` (${inc.ignoreReason})` : ''}
+            {inc.ignoredUntil && <> until <span className="text-ink">{new Date(inc.ignoredUntil).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span></>}.
+            {' '}Then it is checked again and reopens if its alerts still fire. If one gets worse, it reopens straight away.
+          </p>
+        )}
         {!busy && inc.status === 'open' && <p className="text-[11px] text-muted">Investigate builds on the read-only diagnosis below and proposes the fix. Nothing changes without your approval.</p>}
         {error && <p className="text-sm text-red">{error.message}</p>}
       </header>
@@ -123,7 +151,7 @@ export function IncidentDetail() {
             <>
               <p className="text-[15px] leading-relaxed text-ink">{inc.rootCause}</p>
               <p className="mt-1.5 text-xs text-muted">
-                Confidence <span className={clsx('font-medium', CONFIDENCE[inc.confidence ?? 'low'])}>{inc.confidence ?? 'not stated'}</span>
+                <span className={clsx('font-medium', CONFIDENCE[inc.confidence ?? 'low'])}>{SURE[inc.confidence ?? ''] ?? 'Certainty not stated'}</span>
                 {run && <> · <Link className="text-blue-text hover:underline" to={`/runs/${run.id}`}>full report</Link></>}
               </p>
             </>
@@ -219,7 +247,7 @@ export function IncidentDetail() {
           <ol className="relative space-y-3 border-t border-hairline px-5 pb-5 pt-4">
             {timeline.map((t, i) => (
               <li key={i} className="relative pl-4">
-                <span className={clsx('absolute left-0 top-1.5 h-1.5 w-1.5 rounded-full', t.kind === 'alert' ? 'bg-red' : t.kind === 'resolved' || t.kind === 'closed' ? 'bg-green' : t.kind === 'change' || t.kind === 'deploy' ? 'bg-amber' : 'bg-blue')} />
+                <span className={clsx('absolute left-0 top-1.5 h-1.5 w-1.5 rounded-full', t.kind === 'alert' ? 'bg-red' : t.kind === 'resolved' || t.kind === 'closed' ? 'bg-green' : t.kind === 'change' || t.kind === 'deploy' ? 'bg-amber' : t.kind === 'ignored' || t.kind === 'pending' ? 'bg-dim' : 'bg-blue')} />
                 {i < timeline.length - 1 && <span className="absolute left-[2.5px] top-3.5 h-[calc(100%+4px)] w-px bg-hairline" />}
                 <div className="text-[12.5px] leading-snug text-ink">{t.text}</div>
                 <div className="font-mono text-[10.5px] text-dim">{new Date(t.at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</div>
@@ -227,6 +255,26 @@ export function IncidentDetail() {
             ))}
           </ol>
         </Panel>
+      </div>
+    </div>
+  );
+}
+
+/** Ignore for a while -- always for a while, so a mistake cannot hide a problem for good. */
+function IgnoreForm({ busy, onIgnore, onCancel }: { busy: boolean; onIgnore: (hours: number, reason: string) => void; onCancel: () => void }) {
+  const [hours, setHours] = useState<'1' | '4' | '24' | '168'>('4');
+  const [reason, setReason] = useState('');
+  return (
+    <div className="space-y-3 rounded-inner border border-hairline bg-tile-2/60 p-3">
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted">
+        <span>Ignore for</span>
+        <Segmented label="Ignore for" value={hours} onChange={setHours} options={[{ value: '1', label: '1 hour' }, { value: '4', label: '4 hours' }, { value: '24', label: '24 hours' }, { value: '168', label: '7 days' }]} />
+      </div>
+      <input className="input text-sm" value={reason} maxLength={300} placeholder="Why (optional) -- e.g. planned maintenance" onChange={(e) => setReason(e.target.value)} />
+      <p className="text-[11px] leading-relaxed text-muted">Its alerts leave the queue and nothing more is investigated. When the time is up it is checked again and reopens if it is still happening; if an alert gets worse, it reopens straight away.</p>
+      <div className="flex gap-2">
+        <button className="btn-primary !min-h-[34px]" disabled={busy} onClick={() => onIgnore(Number(hours), reason)}>{busy ? <Spinner /> : <EyeOff size={14} />} Ignore</button>
+        <button className="btn-ghost !min-h-[34px]" onClick={onCancel}>Cancel</button>
       </div>
     </div>
   );

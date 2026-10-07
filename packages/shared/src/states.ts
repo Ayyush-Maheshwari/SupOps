@@ -117,7 +117,7 @@ export const ALERT_SEVERITIES = ['critical', 'warning', 'info', 'unknown'] as co
 export type AlertSeverity = (typeof ALERT_SEVERITIES)[number];
 
 /** An incident groups related alerts (and predictions) into one problem. */
-export const INCIDENT_STATUSES = ['open', 'resolved'] as const;
+export const INCIDENT_STATUSES = ['open', 'resolved', 'ignored'] as const;
 export type IncidentStatus = (typeof INCIDENT_STATUSES)[number];
 
 /** How far the automatic triage of an incident got. */

@@ -23,6 +23,9 @@ export interface SignalDef {
   limit: WatchLimit | null;
   /** Smallest change that counts as an anomaly, in the unit. */
   minDelta?: number;
+  /** Levels that are a problem whatever the history: warn and critical (above, or below for badDirection down). */
+  warn?: number;
+  crit?: number;
 }
 
 const FS = 'fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|nsfs",mountpoint!~"/boot.*|/run.*|/snap.*"';
@@ -36,31 +39,31 @@ export const SIGNALS: SignalDef[] = [
     query: `min by (instance, mountpoint) (node_filesystem_avail_bytes{${FS}})` },
   { key: 'inodes_free', title: 'Inodes free', group: 'resources', requires: 'node_filesystem_files_free', unit: 'count', badDirection: 'down', limit: { value: 0, when: 'below' },
     query: `min by (instance, mountpoint) (node_filesystem_files_free{${FS}})` },
-  { key: 'load', title: 'Load per core', group: 'resources', requires: 'node_load5', unit: 'ratio', badDirection: 'up', limit: null, minDelta: 0.3,
+  { key: 'load', warn: 1, crit: 1.5, title: 'Load per core', group: 'resources', requires: 'node_load5', unit: 'ratio', badDirection: 'up', limit: null, minDelta: 0.3,
     query: 'node_load5 / on (instance) count by (instance) (node_cpu_seconds_total{mode="idle"})' },
-  { key: 'net_errors', title: 'Network errors', group: 'resources', requires: 'node_network_receive_errs_total', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.1,
+  { key: 'net_errors', warn: 1, crit: 10, title: 'Network errors', group: 'resources', requires: 'node_network_receive_errs_total', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.1,
     query: 'sum by (instance) (rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]))' },
-  { key: 'pod_restarts', title: 'Pod restarts (15m)', group: 'kubernetes', requires: 'kube_pod_container_status_restarts_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 2,
+  { key: 'pod_restarts', warn: 3, crit: 10, title: 'Pod restarts (15m)', group: 'kubernetes', requires: 'kube_pod_container_status_restarts_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 2,
     query: 'sum by (namespace) (increase(kube_pod_container_status_restarts_total[15m]))' },
   { key: 'pvc_free', title: 'Volume free', group: 'kubernetes', requires: 'kubelet_volume_stats_available_bytes', unit: 'bytes', badDirection: 'down', limit: { value: 0, when: 'below' },
     query: 'min by (namespace, persistentvolumeclaim) (kubelet_volume_stats_available_bytes)' },
-  { key: 'http_5xx', title: 'HTTP 5xx rate', group: 'traffic', requires: 'http_requests_total', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.05,
+  { key: 'http_5xx', warn: 0.1, crit: 1, title: 'HTTP 5xx rate', group: 'traffic', requires: 'http_requests_total', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.05,
     query: 'sum by (job) (rate(http_requests_total{code=~"5.."}[5m]))' },
-  { key: 'http_p99', title: 'Latency p99', group: 'traffic', requires: 'http_request_duration_seconds_bucket', unit: 'seconds', badDirection: 'up', limit: null, minDelta: 0.05,
+  { key: 'http_p99', warn: 1, crit: 3, title: 'Latency p99', group: 'traffic', requires: 'http_request_duration_seconds_bucket', unit: 'seconds', badDirection: 'up', limit: null, minDelta: 0.05,
     query: 'histogram_quantile(0.99, sum by (job, le) (rate(http_request_duration_seconds_bucket[5m])))' },
-  { key: 'ingress_5xx', title: 'Ingress 5xx rate', group: 'traffic', requires: 'nginx_ingress_controller_requests', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.05,
+  { key: 'ingress_5xx', warn: 0.1, crit: 1, title: 'Ingress 5xx rate', group: 'traffic', requires: 'nginx_ingress_controller_requests', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.05,
     query: 'sum by (ingress) (rate(nginx_ingress_controller_requests{status=~"5.."}[5m]))' },
-  { key: 'cert_days', title: 'Certificate days left', group: 'traffic', requires: 'probe_ssl_earliest_cert_expiry', unit: 'days', badDirection: 'down', limit: { value: 0, when: 'below' },
+  { key: 'cert_days', warn: 14, crit: 3, title: 'Certificate days left', group: 'traffic', requires: 'probe_ssl_earliest_cert_expiry', unit: 'days', badDirection: 'down', limit: { value: 0, when: 'below' },
     query: 'min by (instance) ((probe_ssl_earliest_cert_expiry - time()) / 86400)' },
-  { key: 'targets_down', title: 'Scrape targets down', group: 'stack', requires: 'up', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
+  { key: 'targets_down', warn: 1, crit: 3, title: 'Scrape targets down', group: 'stack', requires: 'up', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
     query: 'sum by (job) (1 - up)' },
-  { key: 'rule_failures', title: 'Rule evaluation failures', group: 'stack', requires: 'prometheus_rule_evaluation_failures_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
+  { key: 'rule_failures', warn: 1, crit: 10, title: 'Rule evaluation failures', group: 'stack', requires: 'prometheus_rule_evaluation_failures_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
     query: 'sum(increase(prometheus_rule_evaluation_failures_total[15m]))' },
-  { key: 'notifications_dropped', title: 'Notifications dropped', group: 'stack', requires: 'prometheus_notifications_dropped_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
+  { key: 'notifications_dropped', warn: 1, crit: 10, title: 'Notifications dropped', group: 'stack', requires: 'prometheus_notifications_dropped_total', unit: 'count', badDirection: 'up', limit: null, minDelta: 1,
     query: 'sum(increase(prometheus_notifications_dropped_total[15m]))' },
   { key: 'head_series', title: 'Active series', group: 'stack', requires: 'prometheus_tsdb_head_series', unit: 'count', badDirection: 'up', limit: null,
     query: 'sum(prometheus_tsdb_head_series)' },
-  { key: 'scrape_duration', title: 'Slowest scrape', group: 'stack', requires: 'scrape_duration_seconds', unit: 'seconds', badDirection: 'up', limit: null, minDelta: 1,
+  { key: 'scrape_duration', warn: 10, crit: 30, title: 'Slowest scrape', group: 'stack', requires: 'scrape_duration_seconds', unit: 'seconds', badDirection: 'up', limit: null, minDelta: 1,
     query: 'max by (job) (scrape_duration_seconds)' },
 ];
 
@@ -114,11 +117,30 @@ export async function promRange(
   };
 }
 
-/** A short, human name for a series: its most telling labels. */
+/** Labels people name machines by, most specific first. */
+const NAME_LABELS = ['vm_name', 'vmname', 'vm', 'name', 'nodename', 'hostname', 'host', 'node', 'server', 'service_name', 'service', 'app'];
+/** Scrape jobs that say what was scraped, not which machine. */
+const GENERIC_JOB = /^(node|nodes|node[-_]exporter|node[-_]metrics|prometheus|kubelet|cadvisor|kube[-_].*|kubernetes[-_].*|apiserver|blackbox|serviceMonitor\/.*)$/i;
+
+/**
+ * A short, human name for a series: the label people actually know the machine by
+ * (a VM name, a hostname, a scrape job per VM) before the raw `instance`, which is
+ * often a cloud DNS name or an IP -- then whatever tells series of one machine apart
+ * (mountpoint, namespace, volume).
+ */
 export function seriesName(labels: Record<string, string>): string {
-  const keys = ['instance', 'mountpoint', 'namespace', 'persistentvolumeclaim', 'ingress', 'pod'];
-  const parts = keys.map((k) => labels[k]).filter(Boolean);
-  if (labels.job && !labels.instance) parts.unshift(`job ${labels.job}`);
+  const lower = new Map(Object.entries(labels).map(([k, v]) => [k.toLowerCase(), v]));
+  let who = NAME_LABELS.map((k) => lower.get(k)).find((v) => !!v);
+  // A per-VM scrape job reads better without its plumbing: "web-1-node-metrics" -> "web-1".
+  if (!who && labels.job && !GENERIC_JOB.test(labels.job)) who = labels.job.replace(/[-_](node[-_])?(metrics|exporter)$/i, '') || labels.job;
+  if (!who) who = labels.instance;
+  const rest = ['mountpoint', 'device', 'persistentvolumeclaim', 'ingress', 'pod']
+    .map((k) => labels[k])
+    .filter((v): v is string => !!v && v !== who);
+  // The namespace only helps when nothing more specific names the series.
+  if (!rest.length && labels.namespace && labels.namespace !== who) rest.push(labels.namespace);
+  const parts = [who, ...rest].filter(Boolean);
+  if (!parts.length && labels.job) parts.push(`job ${labels.job}`);
   return parts.length ? parts.join(' ') : Object.values(labels).join(' ') || 'total';
 }
 

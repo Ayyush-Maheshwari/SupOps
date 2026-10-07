@@ -2,7 +2,7 @@ import { and, asc, desc, eq, gt, inArray, sql } from 'drizzle-orm';
 import { agents, alerts, evidence, incidents, observations, runSteps, runs } from '@supops/db';
 import { isTerminalRun } from '@supops/shared';
 import type { ChatMessage } from '@supops/shared';
-import { checkCitations, loadTargets, parseVerdict, runChecks, scopeFromLabels, SEVERITY_RANK, withJumps, withMachinesBehind } from '@supops/core';
+import { checkCitations, loadTargets, parseAction, parseVerdict, runChecks, scopeFromLabels, SEVERITY_RANK, withJumps, withMachinesBehind } from '@supops/core';
 import type { EvidenceItem } from '@supops/core';
 import { db, settingsStore } from '../context.ts';
 import { startRun } from '../services/start-run.ts';
@@ -90,7 +90,7 @@ export function evidenceBlock(inc: IncidentRow, members: AlertRow[], ev: Array<t
   const obs = db.select().from(observations).where(eq(observations.incidentId, inc.id)).all();
   const lines: string[] = [
     `INCIDENT: ${inc.title}`,
-    `Severity ${inc.severity} · opened ${when(inc.openedAt)}${members.length ? ` · ${members.length} alert${members.length > 1 ? 's' : ''}` : ''}${inc.origin === 'prediction' ? ' · raised by a forecast, nothing has failed yet' : ''}`,
+    `Severity ${inc.severity} · opened ${when(inc.openedAt)}${members.length ? ` · ${members.length} alert${members.length > 1 ? 's' : ''}` : ''}${inc.origin === 'prediction' ? ' · raised by a forecast, nothing has failed yet' : inc.origin === 'threshold' ? ' · over the limit set for this signal; decide whether that is a real problem' : ''}`,
   ];
   if (members.length) {
     lines.push('Alerts:');
@@ -160,7 +160,9 @@ export function startIncidentRun(
   if (prior) block += `\n\nREAD-ONLY DIAGNOSIS ALREADY DONE (by SupOps, automatically, when the incident opened):\n${prior.trim()}`;
 
   const task = diagnose
-    ? inc.origin === 'prediction'
+    ? inc.origin === 'threshold'
+      ? `Check this: ${inc.title}. Is it a real problem (and getting worse), or a stable value that only crossed the line set for it?`
+      : inc.origin === 'prediction'
       ? `Investigate this predicted problem before it happens: ${inc.title}. Find why it is heading there and what to do.`
       : `Investigate incident: ${inc.title} (${inc.severity}). Find the root cause.`
     : prior
@@ -209,6 +211,8 @@ const sevRank = (s: string) => SEVERITY_RANK[s === 'unknown' ? 'warning' : s] ??
 async function triage(incidentId: string): Promise<void> {
   let inc = db.select().from(incidents).where(eq(incidents.id, incidentId)).get();
   if (!inc || inc.status !== 'open') return;
+  // Diagnosed already (e.g. reopened after an ignore): the diagnosis stands.
+  if (inc.runId && inc.triageState === 'done') return;
   db.update(incidents).set({ triageState: 'evidence' }).where(eq(incidents.id, inc.id)).run();
   await gatherEvidence(inc);
   inc = db.select().from(incidents).where(eq(incidents.id, incidentId)).get()!;
@@ -266,6 +270,7 @@ export function reconcileTriage(): void {
         triageState: 'done',
         rootCause: verdict.rootCause,
         confidence: verdict.confidence,
+        action: parseAction(text),
         triageNote: notes.join(' ') || null,
       })
       .where(eq(incidents.id, inc.id))

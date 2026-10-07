@@ -1,0 +1,1 @@
+ALTER TABLE `incidents` ADD `action` text;

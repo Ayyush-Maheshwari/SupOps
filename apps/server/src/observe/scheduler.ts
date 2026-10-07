@@ -1,5 +1,6 @@
 import { alertPoller } from './alert-poller.ts';
-import { reconcileTriage, resumeTriage } from './triage.ts';
+import { enqueueTriage, reconcileTriage, resumeTriage } from './triage.ts';
+import { expireIgnores } from './incidents.ts';
 import { watcher } from './watcher.ts';
 
 /**
@@ -17,6 +18,8 @@ class ObserveScheduler {
     this.timer = setInterval(() => {
       try {
         reconcileTriage();
+        // Ignores that ran out: what still fires is open again, and diagnosed if it never was.
+        for (const id of expireIgnores()) enqueueTriage(id);
       } catch (err) {
         console.error('incident triage reconcile failed:', err);
       }

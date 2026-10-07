@@ -5,10 +5,10 @@ import type { AddressInfo } from 'node:net';
 import type { ResolvedTarget } from '../tools/types.ts';
 import { chooseIncident, groupKeyOf, worstSeverity, type OpenIncidentRef } from './correlate.ts';
 import { fromAlertmanager, fromPrometheus, fetchConnectionAlerts } from './sources.ts';
-import { checkCitations, parseVerdict } from './citations.ts';
+import { checkCitations, parseAction, parseVerdict } from './citations.ts';
 import { clusterLogLines, logTemplate } from './logs.ts';
 import { promString, runChecks, scopeFromLabels, scopeMatchers } from './checks.ts';
-import { formatValue, parseSeriesKey, seriesKey } from './signals.ts';
+import { formatValue, parseSeriesKey, seriesKey, seriesName } from './signals.ts';
 import { queryMetricsTool, queryLogsTool, alertsTool } from '../tools/observability.ts';
 
 const NOW = Date.UTC(2026, 5, 1, 12);
@@ -237,4 +237,23 @@ test('alerts are read from Prometheus connections', async () => {
   } finally {
     await be.close();
   }
+});
+
+test('series are named the way people know the machine', () => {
+  // A per-VM scrape job beats a cloud DNS instance name.
+  assert.equal(seriesName({ instance: 'ip-10-0-4-20.ec2.internal:9100', job: 'billing-api-node-metrics', mountpoint: '/' }), 'billing-api /');
+  // An explicit name label beats the job.
+  assert.equal(seriesName({ instance: '10.0.4.20:9100', job: 'node', vm_name: 'web-1' }), 'web-1');
+  // A generic job says nothing about the machine: fall back to the instance.
+  assert.equal(seriesName({ instance: 'web-1:9100', job: 'node-exporter', mountpoint: '/var' }), 'web-1:9100 /var');
+  // The namespace only when nothing more specific separates the series.
+  assert.equal(seriesName({ namespace: 'shop', persistentvolumeclaim: 'data-0' }), 'data-0');
+  assert.equal(seriesName({ job: 'node' }), 'job node');
+});
+
+test('the plain verdict is read from the report', () => {
+  assert.equal(parseAction('**Action:** act now\n**Root cause:** x'), 'act_now');
+  assert.equal(parseAction('- Action: can wait (schedule it)'), 'can_wait');
+  assert.equal(parseAction('**Action:** none needed'), 'none');
+  assert.equal(parseAction('no verdict here'), null);
 });

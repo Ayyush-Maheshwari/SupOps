@@ -1,5 +1,5 @@
-import { and, eq, inArray, isNull } from 'drizzle-orm';
-import { alerts, incidents } from '@supops/db';
+import { and, eq, inArray, isNull, lt } from 'drizzle-orm';
+import { alerts, incidents, observations } from '@supops/db';
 import type { AlertSeverity } from '@supops/shared';
 import { OPEN_ALERT_STATUSES } from '@supops/shared';
 import { chooseIncident, groupKeyOf, loadTargets, scopeAlert, worstSeverity } from '@supops/core';
@@ -58,7 +58,7 @@ export function attachToIncident(alert: AlertRow): { incident: IncidentRow; crea
         origin: 'alerts',
         severity: worstSeverity(inc.severity, alert.severity) as AlertSeverity,
         targetIds: [...new Set([...(inc.targetIds ?? []), ...targetIds])],
-        title: inc.origin === 'prediction' ? inc.title : incidentTitle(members),
+        title: inc.origin !== 'alerts' ? inc.title : incidentTitle(members),
         groupReason: inc.groupReason ? (inc.groupReason.includes(pick.reason) ? inc.groupReason : `${inc.groupReason}; ${pick.reason}`).slice(0, 1000) : pick.reason,
       })
       .where(eq(incidents.id, inc.id))
@@ -159,4 +159,51 @@ export function splitIncident(incidentId: string, alertIds: string[]): IncidentR
   refreshIncident(created.id);
   refreshIncident(incidentId);
   return created;
+}
+
+/** Severity order: is `next` worse than `prev`? Unknown counts as warning. */
+const rank = (s: string) => ({ critical: 3, warning: 2, unknown: 2, info: 1 } as Record<string, number>)[s] ?? 0;
+export const worse = (next: string, prev: string) => rank(next) > rank(prev);
+
+/**
+ * Open an ignored (or resolved) incident again, with its still-firing alerts back
+ * in the queue. Used when an ignore ends, when something escalates, and by a person.
+ */
+export function reopenIncident(incidentId: string): IncidentRow | null {
+  const inc = db.select().from(incidents).where(eq(incidents.id, incidentId)).get();
+  if (!inc || inc.mergedInto) return null;
+  db.update(alerts)
+    .set({ status: 'new', decidedAt: null, decidedBy: null })
+    .where(and(eq(alerts.incidentId, inc.id), eq(alerts.status, 'ignored'), isNull(alerts.resolvedAt)))
+    .run();
+  return db
+    .update(incidents)
+    .set({ status: 'open', resolvedAt: null, lastSeenAt: new Date(), ignoredUntil: null })
+    .where(eq(incidents.id, inc.id))
+    .returning()
+    .get();
+}
+
+/**
+ * Ignores that have run out: reopen what is still happening (and get it diagnosed if
+ * it never was), resolve what has stopped. Returns the ids reopened.
+ */
+export function expireIgnores(now = new Date()): string[] {
+  const due = db.select().from(incidents).where(and(eq(incidents.status, 'ignored'), lt(incidents.ignoredUntil, now))).all();
+  const reopened: string[] = [];
+  for (const inc of due) {
+    const firing = db
+      .select({ id: alerts.id })
+      .from(alerts)
+      .where(and(eq(alerts.incidentId, inc.id), isNull(alerts.resolvedAt), inArray(alerts.status, ['new', 'investigating', 'ignored'])))
+      .get();
+    const predicted = db.select({ id: observations.id }).from(observations).where(and(eq(observations.incidentId, inc.id), isNull(observations.resolvedAt))).get();
+    if (firing || predicted) {
+      reopenIncident(inc.id);
+      reopened.push(inc.id);
+    } else {
+      db.update(incidents).set({ status: 'resolved', resolvedAt: now, ignoredUntil: null }).where(eq(incidents.id, inc.id)).run();
+    }
+  }
+  return reopened;
 }

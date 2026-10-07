@@ -1,9 +1,9 @@
 import { and, eq, inArray } from 'drizzle-orm';
-import { alerts } from '@supops/db';
+import { alerts, incidents } from '@supops/db';
 import type { AlertSeverity, AlertSource } from '@supops/shared';
 import { OPEN_ALERT_STATUSES } from '@supops/shared';
 import { db } from '../context.ts';
-import { attachToIncident, refreshIncident } from './incidents.ts';
+import { attachToIncident, refreshIncident, reopenIncident, worse } from './incidents.ts';
 import { enqueueTriage } from './triage.ts';
 
 /**
@@ -35,14 +35,22 @@ type AlertRow = typeof alerts.$inferSelect;
 const identity = (title: string, labels: Record<string, string>) =>
   `${(labels.alertname || title).toLowerCase()}|${(labels.instance || labels.host || labels.hostname || labels.node || '').toLowerCase().replace(/:\d+$/, '')}`;
 
+/** Is this alert's incident ignored right now (and not yet due to be checked again)? */
+function underIgnore(row: AlertRow): boolean {
+  if (!row.incidentId) return false;
+  const inc = db.select({ status: incidents.status, until: incidents.ignoredUntil }).from(incidents).where(eq(incidents.id, row.incidentId)).get();
+  return inc?.status === 'ignored' && (!inc.until || inc.until.getTime() > Date.now());
+}
+
 function findExisting(a: IncomingAlert): AlertRow | undefined {
-  const statuses = a.connectionId ? [...OPEN_ALERT_STATUSES, 'ignored' as const] : [...OPEN_ALERT_STATUSES];
   const exact = db
     .select()
     .from(alerts)
-    .where(and(eq(alerts.projectId, a.projectId), eq(alerts.fingerprint, a.fingerprint), inArray(alerts.status, statuses)))
+    .where(and(eq(alerts.projectId, a.projectId), eq(alerts.fingerprint, a.fingerprint), inArray(alerts.status, [...OPEN_ALERT_STATUSES, 'ignored'])))
     .get();
-  if (exact) return exact;
+  // An ignored alert stays the same alert while its connection still reports it, or
+  // while its incident's ignore lasts; after that a repeat is news again.
+  if (exact && (exact.status !== 'ignored' || a.connectionId || underIgnore(exact))) return exact;
   // The other route's copy: an open alert from a different source with the same name and host.
   const id = identity(a.title, a.labels);
   if (id.endsWith('|')) return undefined;
@@ -69,6 +77,11 @@ export function ingestAlert(a: IncomingAlert): { alertId: string | null; created
   }
 
   if (existing) {
+    // Worse than when it was ignored: an ignore never hides an escalation.
+    if (existing.status === 'ignored' && existing.incidentId && underIgnore(existing) && worse(a.severity, existing.severity)) {
+      reopenIncident(existing.incidentId);
+      enqueueTriage(existing.incidentId);
+    }
     db.update(alerts)
       .set({
         count: a.notification ? existing.count + 1 : existing.count,

@@ -218,13 +218,23 @@ to be installed or configured on their side.
   your approval on every change. While the diagnosis is still running, Investigate opens it.
   Limit automatic diagnosis by severity or runs per hour, or switch it off, in
   **Settings → Observability**.
-- **Watched signals and predictions.** Every 5 minutes SupOps samples key signals it finds
-  on your metrics connection: CPU, memory, disk and inodes, load, network errors, pod
-  restarts, volumes, 5xx rate and latency, certificate expiry, and the monitoring stack
-  itself. You can add your own PromQL. Each series is compared with its own history,
-  including the same time on previous days, to spot what is unusual. Resources with a
-  limit are forecast ("Disk free on web-1 /var runs out in about 12h"). A forecast inside
-  24 hours opens an incident before any alert fires.
+- **Every series watched, worst first.** SupOps finds the key signals on your metrics
+  connection: CPU, memory, disk and inodes, load, network errors, pod restarts, volumes, 5xx
+  rate and latency, certificate expiry, and the monitoring stack itself. You can add your own
+  PromQL. Every 5 minutes it checks **every** series of each one, up to 2,000. The metrics
+  backend works out each one's last day, its value this time yesterday and its trend, so no
+  series is left out for want of storage. Each series gets a score for how close it is to
+  trouble, with the reason in words, for example "runs out in 12h", "+6σ vs last day" or
+  "1.9, at or above 1.5".
+- **The Signals page** shows, under each headline (Resources, Kubernetes, Traffic,
+  Monitoring stack, Custom), everything watched there, worst first, by signal or by machine,
+  with search. Beside it are live graphs of the two nearest to trouble, showing their usual
+  range, where they are heading and their limit. Clicking anything in the list puts it in the
+  graph. A **Most at risk** strip shows the worst few across all headlines, and
+  **Investigate** on a graph starts a read-only investigation of that series.
+- **Predictions.** Something unusual is reported once it has held for two checks and is unlike
+  this time yesterday, so a nightly job is not news every night. A resource heading for its
+  limit within 24 hours opens an incident before any alert fires.
 - **Check the stack itself.** **Observability → Check the stack**, or **Investigate the
   stack itself** in Investigate, checks that monitoring works: scrape targets, rule
   evaluation, notification delivery, config reloads, storage and log ingestion.

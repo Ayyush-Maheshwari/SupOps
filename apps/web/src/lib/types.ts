@@ -326,8 +326,13 @@ export interface Incident {
   projectId: string;
   title: string;
   severity: Severity;
-  status: 'open' | 'resolved';
-  origin: 'alerts' | 'prediction';
+  status: 'open' | 'resolved' | 'ignored';
+  origin: 'alerts' | 'prediction' | 'threshold';
+  /** The diagnosis' verdict: act_now | can_wait | none. */
+  action: 'act_now' | 'can_wait' | 'none' | null;
+  ignoredUntil: string | null;
+  ignoredBy: string | null;
+  ignoreReason: string | null;
   groupReason: string | null;
   targetIds: string[] | null;
   triageState: 'none' | 'evidence' | 'running' | 'done' | 'skipped' | 'failed';
@@ -350,7 +355,21 @@ export interface Observation {
   targetId: string | null;
   watchId: string;
   series: string;
-  details: { etaMs?: number; confidence?: string; z?: number; baseline?: number } | null;
+  details: {
+    etaMs?: number;
+    confidence?: string;
+    z?: number;
+    baseline?: number;
+    direction?: 'up' | 'down';
+    over?: boolean;
+    worsening?: boolean;
+    slopePerHour?: number;
+    limit?: { value: number; when: 'below' | 'above' };
+    unit?: string;
+    value?: number;
+    name?: string;
+    signal?: string;
+  } | null;
   startedAt: string;
   incidentId: string | null;
   unit?: string;
@@ -384,6 +403,8 @@ export interface ObservabilityOverview {
   observations: Observation[];
   connections: ObsConnection[];
   settings: ObservabilitySettings;
+  /** Series being watched right now. */
+  watched: number;
 }
 
 export interface Evidence {
@@ -408,6 +429,20 @@ export interface IncidentDetail {
   mergeCandidates: Array<{ id: string; title: string }>;
 }
 
+export interface WatchItem {
+  key: string;
+  name: string;
+  labels: Record<string, string>;
+  value: number;
+  /** 0-100: how close to trouble. */
+  score: number;
+  reasons: string[];
+  etaMs: number | null;
+  /** The registered machine it is about, when matched. */
+  target: string | null;
+  flags: string[];
+}
+
 export interface Watch {
   id: string;
   connectionId: string;
@@ -424,17 +459,25 @@ export interface Watch {
   lastRunAt: string | null;
   lastError: string | null;
   seriesCount: number;
-  series: Array<{ key: string; name: string; points: Array<[number, number]>; flags: string[] }>;
-  moreSeries: number;
+  series: WatchItem[];
 }
 
-export interface WatchDetail {
-  watch: Watch;
-  series: Array<{
-    key: string;
-    name: string;
-    points: Array<[number, number]>;
-    band: { low: number; high: number; median: number } | null;
-    forecast: { etaMs: number; slopePerHour: number; confidence: string; current: number } | null;
-  }>;
+export interface SeriesChartData {
+  points: Array<[number, number]>;
+  unit: string;
+  limit: { value: number; when: 'below' | 'above' } | null;
+  band: { low: number; high: number } | null;
+  forecast: { slopePerHour: number; etaMs: number } | null;
+}
+
+export interface AtRiskItem {
+  watchId: string;
+  key: string;
+  name: string;
+  value: number;
+  score: number;
+  reasons: string[];
+  title: string;
+  unit: string;
+  group: Watch['group'];
 }

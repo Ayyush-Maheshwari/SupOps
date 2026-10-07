@@ -15,19 +15,22 @@ process.env.LLM_BASE_URL = 'http://127.0.0.1:9/';
 
 const { db, settingsStore } = await import('../context.ts');
 const { agents, alerts, incidents, observations, projects, targets, watches, DEFAULT_RISK_POLICY, DEFAULT_RUN_BUDGET } = await import('@supops/db');
-const { eq } = await import('drizzle-orm');
+const { and, eq, isNull } = await import('drizzle-orm');
+const { watchSeries } = await import('@supops/db');
 const { pollConnection } = await import('./alert-poller.ts');
 const { ingestAlert } = await import('./ingest.ts');
-const { mergeIncidents, splitIncident } = await import('./incidents.ts');
+const { expireIgnores, mergeIncidents, splitIncident } = await import('./incidents.ts');
 const { projectConnections } = await import('./connections.ts');
-const { sampleWatch } = await import('./watcher.ts');
+const { reevaluateWatch, sampleWatch } = await import('./watcher.ts');
 const { evidenceBlock } = await import('./triage.ts');
 const { cleanupObservability } = await import('@supops/core');
 
 // ---- a fake Alertmanager + Prometheus --------------------------------------------
 
 let firing: Array<Record<string, unknown>> = [];
-let diskSeries: Array<[number, string]> = [];
+/** The disk the fake backend reports: free bytes now, and losing this many per second. */
+let disk = { now: 20e9, perSecond: -1e9 / 3600 };
+const vector = (v: number) => ({ status: 'success', data: { resultType: 'vector', result: [{ metric: { instance: 'web-1:9100', mountpoint: '/var' }, value: [0, String(v)] }] } });
 let server: Server;
 let base = '';
 
@@ -36,8 +39,13 @@ before(async () => {
     const url = new URL(req.url!, 'http://x');
     const send = (v: unknown) => res.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify(v));
     if (url.pathname === '/api/v2/alerts') return send(firing);
-    if (url.pathname === '/api/v1/query_range') {
-      return send({ status: 'success', data: { resultType: 'matrix', result: [{ metric: { instance: 'web-1:9100', mountpoint: '/var' }, values: diskSeries }] } });
+    const q = url.searchParams.get('query') ?? '';
+    if (url.pathname === '/api/v1/query' && q.includes('node_filesystem_avail_bytes')) {
+      if (q.startsWith('avg_over_time')) return send(vector(disk.now - disk.perSecond * 43_200));
+      if (q.startsWith('stddev_over_time')) return send(vector(Math.abs(disk.perSecond) * 25_000 || 1e8));
+      if (q.includes('offset 1d')) return send(vector(disk.now - disk.perSecond * 86_400));
+      if (q.startsWith('deriv')) return send(vector(disk.perSecond));
+      return send(vector(disk.now));
     }
     if (url.pathname === '/api/v1/query') return send({ status: 'success', data: { resultType: 'vector', result: [] } });
     res.writeHead(404).end('{}');
@@ -152,30 +160,27 @@ test('unrelated alerts open separate incidents; a person can merge and split the
   assert.equal(splitIncident(split.id, [latency.id]), null, 'cannot split out every alert');
 });
 
-test('the watcher stores samples and opens a predicted incident before a disk fills', async () => {
+test('the watcher scores every series and opens a predicted incident before a disk fills', async () => {
   const { projectId, prom, web } = seed();
   const conn = projectConnections(projectId).find((c) => c.id === prom.id)!;
-  const now = Date.now();
   // /var losing 1 GB an hour with 20 GB left: full in about 20 hours.
-  diskSeries = Array.from({ length: 100 }, (_, i) => {
-    const t = Math.floor(now / 1000) - (99 - i) * 300;
-    return [t, String(20e9 + (99 - i) * 300 * (1e9 / 3600))];
-  });
+  disk = { now: 20e9, perSecond: -1e9 / 3600 };
   const w = db.insert(watches).values({
     projectId, connectionId: prom.id, key: 'disk_free', title: 'Disk free', query: 'node_filesystem_avail_bytes', unit: 'bytes',
     builtin: true, badDirection: 'down', limit: { value: 0, when: 'below' }, group: 'resources',
   }).returning().get();
 
-  await sampleWatch(w, conn, now);
+  await sampleWatch(w, conn);
   const sampled = db.select().from(watches).where(eq(watches.id, w.id)).get()!;
   assert.equal(sampled.seriesCount, 1);
   assert.equal(sampled.lastError, null);
+  const row = db.select().from(watchSeries).where(eq(watchSeries.watchId, w.id)).get()!;
+  assert.equal(row.score, 85, 'runs out within a day');
+  assert.match(row.reasons[0]!, /runs out in (19|20)h/);
+  assert.equal(row.targetId, web.id, 'tied to the machine by its instance label');
 
-  const obs = db.select().from(observations).where(eq(observations.watchId, w.id)).all();
-  const f = obs.find((o) => o.kind === 'forecast')!;
-  assert.ok(f, 'a forecast was recorded');
+  const f = db.select().from(observations).where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'))).get()!;
   assert.equal(f.severity, 'warning', 'about 20h left: inside the 24h warning horizon');
-  assert.equal(f.targetId, web.id, 'tied to the machine by its instance label');
   assert.match(f.message, /Disk free on web-1:9100 \/var runs out in about (19|20)h/);
   const inc = db.select().from(incidents).where(eq(incidents.id, f.incidentId!)).get()!;
   assert.equal(inc.origin, 'prediction');
@@ -186,12 +191,106 @@ test('the watcher stores samples and opens a predicted incident before a disk fi
   assert.match(block, /Forecast: Disk free on web-1/);
 
   // The disk was cleaned up: the forecast and its incident resolve.
-  diskSeries = diskSeries.map(([t]) => [t, '500000000000']);
-  await sampleWatch(db.select().from(watches).where(eq(watches.id, w.id)).get()!, conn, now + 300_000);
+  disk = { now: 500e9, perSecond: 0 };
+  await sampleWatch(db.select().from(watches).where(eq(watches.id, w.id)).get()!, conn);
   assert.ok(db.select().from(observations).where(eq(observations.id, f.id)).get()!.resolvedAt);
   assert.equal(db.select().from(incidents).where(eq(incidents.id, inc.id)).get()!.status, 'resolved');
 
   // And the 15-day clean-up leaves recent data alone.
   const r = cleanupObservability(db, { days: 15 });
   assert.equal(r.incidents, 0);
+});
+
+/** Ignore an incident the way the route does. */
+function ignoreIncident(id: string, hours: number) {
+  db.update(incidents).set({ status: 'ignored', resolvedAt: new Date(), ignoredUntil: new Date(Date.now() + hours * 3_600_000) }).where(eq(incidents.id, id)).run();
+  db.update(alerts).set({ status: 'ignored' }).where(and(eq(alerts.incidentId, id), isNull(alerts.resolvedAt))).run();
+}
+
+test('an ignore always ends: still firing reopens, stopped resolves', async () => {
+  const { projectId, am } = seed();
+  const conn = projectConnections(projectId).find((c) => c.id === am.id)!;
+  firing = [amAlert('i1', 'Flappy', 'svc-1'), amAlert('i2', 'Quiet', 'svc-2')];
+  await pollConnection(projectId, conn);
+  const [flappy, quiet] = ['Flappy', 'Quiet'].map((t) => db.select().from(alerts).where(and(eq(alerts.projectId, projectId), eq(alerts.title, t))).get()!);
+  ignoreIncident(flappy!.incidentId!, 4);
+  ignoreIncident(quiet!.incidentId!, 4);
+
+  // While ignored, polling keeps them ignored and opens nothing new.
+  firing = [amAlert('i1', 'Flappy', 'svc-1')];
+  await pollConnection(projectId, conn);
+  assert.equal(db.select().from(alerts).where(eq(alerts.id, flappy!.id)).get()!.status, 'ignored');
+  assert.equal(db.select().from(incidents).where(and(eq(incidents.projectId, projectId), eq(incidents.status, 'open'))).all().length, 0);
+  assert.deepEqual(expireIgnores(), [], 'nothing is due yet');
+
+  // Time is up.
+  const later = new Date(Date.now() + 5 * 3_600_000);
+  const reopened = expireIgnores(later);
+  assert.deepEqual(reopened, [flappy!.incidentId]);
+  assert.equal(db.select().from(incidents).where(eq(incidents.id, flappy!.incidentId!)).get()!.status, 'open');
+  assert.equal(db.select().from(alerts).where(eq(alerts.id, flappy!.id)).get()!.status, 'new', 'back in the queue');
+  assert.equal(db.select().from(incidents).where(eq(incidents.id, quiet!.incidentId!)).get()!.status, 'resolved', 'stopped firing: resolved, not reopened');
+});
+
+test('an escalation breaks through an ignore at once', async () => {
+  const { projectId, am } = seed();
+  const conn = projectConnections(projectId).find((c) => c.id === am.id)!;
+  firing = [amAlert('e1', 'DiskFilling', 'db-3', 'warning')];
+  await pollConnection(projectId, conn);
+  const row = db.select().from(alerts).where(and(eq(alerts.projectId, projectId), eq(alerts.title, 'DiskFilling'))).get()!;
+  ignoreIncident(row.incidentId!, 168);
+
+  firing = [amAlert('e1', 'DiskFilling', 'db-3', 'critical')];
+  await pollConnection(projectId, conn);
+  assert.equal(db.select().from(incidents).where(eq(incidents.id, row.incidentId!)).get()!.status, 'open');
+  assert.equal(db.select().from(alerts).where(eq(alerts.id, row.id)).get()!.status, 'new');
+});
+
+test('a Slack repeat stays with an ignored incident; after the ignore it is news again', () => {
+  const { projectId } = seed();
+  const slack = () =>
+    ingestAlert({
+      projectId, source: 'slack', fingerprint: 'slack-x', title: 'NoisyCron', severity: 'warning', summary: null,
+      labels: { alertname: 'NoisyCron', instance: 'cron-1' }, status: 'firing', notification: true,
+      slack: { channelId: 'C9', channelName: 'cron' },
+    });
+  slack();
+  const first = db.select().from(alerts).where(and(eq(alerts.projectId, projectId), eq(alerts.title, 'NoisyCron'))).get()!;
+  ignoreIncident(first.incidentId!, 1);
+  slack();
+  assert.equal(db.select().from(alerts).where(and(eq(alerts.projectId, projectId), eq(alerts.title, 'NoisyCron'))).all().length, 1, 'kept with the ignored one');
+  db.update(incidents).set({ ignoredUntil: new Date(Date.now() - 1000) }).where(eq(incidents.id, first.incidentId!)).run();
+  slack();
+  assert.equal(db.select().from(alerts).where(and(eq(alerts.projectId, projectId), eq(alerts.title, 'NoisyCron'))).all().length, 2, 'news again once the ignore is over');
+});
+
+test('editing a signal re-evaluates what it found', async () => {
+  const { projectId, prom } = seed();
+  disk = { now: 20e9, perSecond: -1e9 / 3600 };
+  const w = db.insert(watches).values({
+    projectId, connectionId: prom.id, key: 'custom:disk', title: 'Disk free', query: 'node_filesystem_avail_bytes', unit: 'bytes',
+    builtin: false, badDirection: 'down', limit: { value: 0, when: 'below' }, group: 'custom',
+  }).returning().get();
+  await sampleWatch(w, projectConnections(projectId).find((c) => c.id === prom.id)!);
+  const f = db.select().from(observations).where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'))).get()!;
+  assert.ok(f.incidentId, 'a predicted incident was raised');
+
+  // A higher limit: it runs out sooner, and the incident follows.
+  db.update(watches).set({ limit: { value: 16e9, when: 'below' } }).where(eq(watches.id, w.id)).run();
+  assert.deepEqual(await reevaluateWatch(w.id, { queryChanged: false }), { ok: true });
+  assert.match(db.select().from(observations).where(eq(observations.id, f.id)).get()!.message, /reaches its limit in about (3|4)h/);
+  assert.equal(db.select().from(incidents).where(eq(incidents.id, f.incidentId!)).get()!.severity, 'critical');
+
+  // The limit is removed: no forecast any more, and the predicted incident closes.
+  db.update(watches).set({ limit: null }).where(eq(watches.id, w.id)).run();
+  await reevaluateWatch(w.id, { queryChanged: false });
+  assert.ok(db.select().from(observations).where(eq(observations.id, f.id)).get()!.resolvedAt);
+  assert.equal(db.select().from(incidents).where(eq(incidents.id, f.incidentId!)).get()!.status, 'resolved');
+
+  // A new query starts over: what was known about the old one is dropped.
+  db.insert(watchSeries).values({ watchId: w.id, series: '{stale="1"}', labels: { stale: '1' }, name: 'stale', value: 1, score: 99, reasons: [] }).run();
+  db.update(watches).set({ query: 'node_filesystem_avail_bytes{mountpoint="/var"}' }).where(eq(watches.id, w.id)).run();
+  await reevaluateWatch(w.id, { queryChanged: true });
+  const after = db.select().from(watchSeries).where(eq(watchSeries.watchId, w.id)).all();
+  assert.ok(after.length === 1 && after[0]!.series !== '{stale="1"}', 'stale series gone, the new query scanned');
 });

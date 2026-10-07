@@ -21,7 +21,7 @@ export const incidents = sqliteTable(
     severity: text('severity').$type<AlertSeverity>().notNull().default('unknown'),
     status: text('status').$type<IncidentStatus>().notNull().default('open'),
     /** `alerts` (grouped from alerts) or `prediction` (raised by a forecast). */
-    origin: text('origin').$type<'alerts' | 'prediction'>().notNull().default('alerts'),
+    origin: text('origin').$type<'alerts' | 'prediction' | 'threshold'>().notNull().default('alerts'),
     /** The labels that define the group (namespace, service, instance...). */
     groupKey: text('group_key', { mode: 'json' }).$type<Record<string, string>>(),
     /** Why the alerts were grouped, in words a person can check. */
@@ -36,12 +36,23 @@ export const incidents = sqliteTable(
     rootCause: text('root_cause'),
     /** high | medium | low | inconclusive */
     confidence: text('confidence'),
+    /** The diagnosis' verdict in plain terms: act_now | can_wait | none. */
+    action: text('action').$type<'act_now' | 'can_wait' | 'none'>(),
 
     openedAt: createdAt(),
     lastSeenAt: ts('last_seen_at').notNull().$defaultFn(() => new Date()),
     resolvedAt: ts('resolved_at'),
     /** Set when a person merged this incident into another. */
     mergedInto: text('merged_into'),
+    /**
+     * An ignore always ends: at this time the incident is checked again and reopens
+     * if its alerts still fire (or its forecast still holds). Never permanent, so a
+     * mistaken ignore cannot hide a real problem for good.
+     */
+    ignoredUntil: ts('ignored_until'),
+    /** Who ignored it, and why -- shown with the incident. */
+    ignoredBy: text('ignored_by'),
+    ignoreReason: text('ignore_reason'),
   },
   (t) => [index('incidents_project_status').on(t.projectId, t.status, t.openedAt), index('incidents_resolved').on(t.resolvedAt)],
 );
@@ -162,4 +173,36 @@ export const observations = sqliteTable(
     index('observations_open').on(t.projectId, t.resolvedAt),
     index('observations_watch').on(t.watchId, t.series, t.kind),
   ],
+);
+
+/**
+ * The latest look at every series of a watch: its value, how close it is to trouble
+ * (score 0-100, with reasons) and what that is based on. One row per series,
+ * replaced on every scan, so the list of what is watched is always complete -- the
+ * history behind a graph is read from the metrics backend when it is shown.
+ */
+export const watchSeries = sqliteTable(
+  'watch_series',
+  {
+    watchId: text('watch_id')
+      .notNull()
+      .references(() => watches.id, { onDelete: 'cascade' }),
+    series: text('series').notNull(),
+    labels: text('labels', { mode: 'json' }).$type<Record<string, string>>().notNull(),
+    name: text('name').notNull(),
+    value: real('value').notNull(),
+    score: integer('score').notNull().default(0),
+    reasons: text('reasons', { mode: 'json' }).$type<string[]>().notNull(),
+    /** Last day's average and spread: the "usual range" band on its graph. */
+    avg1d: real('avg_1d'),
+    sd1d: real('sd_1d'),
+    /** Change per hour over the last 6 hours, for the forecast line. */
+    slopePerHour: real('slope_per_hour'),
+    etaMs: integer('eta_ms'),
+    /** Consecutive scans it has looked unusual; two in a row before it is reported. */
+    anomalyStreak: integer('anomaly_streak').notNull().default(0),
+    targetId: text('target_id').references(() => targets.id, { onDelete: 'set null' }),
+    updatedAt: ts('updated_at').notNull().$defaultFn(() => new Date()),
+  },
+  (t) => [primaryKey({ columns: [t.watchId, t.series] }), index('watch_series_score').on(t.watchId, t.score)],
 );

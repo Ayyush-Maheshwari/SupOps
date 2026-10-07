@@ -6,3 +6,5 @@ export * from './citations.ts';
 export * from './logs.ts';
 export * from './checks.ts';
 export * from './signals.ts';
+export * from './scan.ts';
+export * from './vulnerability.ts';
