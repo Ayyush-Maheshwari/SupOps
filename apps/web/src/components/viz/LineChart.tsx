@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { clsx } from 'clsx';
 import { formatValue } from '@supops/shared';
 
@@ -40,6 +40,8 @@ export function niceTicks(lo: number, hi: number, count = 4): number[] {
 }
 
 const MIN = 60_000;
+/** The share of the width the forecast gets, after the data. */
+const FORECAST_ZONE = 0.24;
 const HOUR = 3_600_000;
 const TIME_STEPS = [5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR, 48 * HOUR, 7 * 24 * HOUR];
 
@@ -77,6 +79,16 @@ export function LineChart({
   highlight?: string | null;
 }) {
   const [hover, setHover] = useState<number | null>(null);
+  // The plot's real width: how many time labels fit, and how long the forecast's label can be.
+  const plotRef = useRef<HTMLDivElement>(null);
+  const [plotW, setPlotW] = useState(600);
+  useEffect(() => {
+    const el = plotRef.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setPlotW(el.clientWidth || 600));
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, []);
   const H = height;
   const pad = compact ? 2 : 6;
 
@@ -86,15 +98,20 @@ export function LineChart({
     let t0 = Math.min(...all.map((p) => p[0]));
     let t1 = Math.max(...all.map((p) => p[0]));
     const ext: number[] = all.map((p) => p[1]);
-    // Room for the forecast: up to a quarter more of the window, ending at the ETA.
+    // The forecast runs to when it reaches the limit (or a stretch ahead without one).
+    // It gets its own zone on the right, on its own scale: hours of data and days of
+    // forecast never share one time axis that would put the wrong time under it.
     const fc = series.find((s) => s.forecast && s.points.length);
+    const dataEnd = t1;
     let fcEnd = t1;
+    let fcHitsLimit = false;
     if (fc?.forecast) {
-      const span = Math.max(t1 - t0, 3_600_000);
-      fcEnd = t1 + Math.min(span * 0.35, fc.forecast.etaMs ?? span * 0.35);
+      const span = Math.max(t1 - t0, HOUR);
       const last = fc.points[fc.points.length - 1]!;
-      ext.push(last[1] + (fc.forecast.slopePerHour * (fcEnd - last[0])) / 3_600_000);
-      t1 = fcEnd;
+      fcHitsLimit = fc.forecast.etaMs !== null && fc.forecast.etaMs > 0;
+      fcEnd = last[0] + (fcHitsLimit ? fc.forecast.etaMs! : span * 0.35);
+      // Reaching the limit ends exactly on it (not a rounding hair past, which would stretch the axis).
+      ext.push(fcHitsLimit && limit !== undefined && limit !== null ? limit : last[1] + (fc.forecast.slopePerHour * (fcEnd - last[0])) / HOUR);
     }
     for (const s of series) if (s.band) ext.push(s.band.low, s.band.high);
     if (limit !== undefined && limit !== null) {
@@ -123,9 +140,16 @@ export function LineChart({
       }
     }
     if (t1 === t0) t0 -= 60_000;
-    const x = (t: number) => pad + ((t - t0) / (t1 - t0)) * (W - pad * 2);
+    const zone = fcEnd > dataEnd ? (compact ? 0.25 : FORECAST_ZONE) : 0;
+    const dataRight = pad + (W - pad * 2) * (1 - zone);
+    const x = (t: number) =>
+      t <= dataEnd || !zone
+        ? pad + ((t - t0) / (dataEnd - t0)) * (dataRight - pad)
+        : dataRight + ((t - dataEnd) / (fcEnd - dataEnd)) * (W - pad - dataRight);
+    /** A position back to a time, within the data only. */
+    const tAt = (px: number) => t0 + (Math.min(Math.max(px, pad), dataRight) - pad) / (dataRight - pad) * (dataEnd - t0);
     const y = (v: number) => H - pad - ((v - lo) / (hi - lo)) * (H - pad * 2);
-    return { t0, t1, lo, hi, x, y, fcEnd };
+    return { t0, t1: dataEnd, lo, hi, x, y, tAt, fcEnd, fcHitsLimit, dataRight, zone };
   }, [series, H, pad, unit, limit, compact]);
 
   if (!geo) {
@@ -136,7 +160,17 @@ export function LineChart({
   const hoverAt = hover !== null ? longest.points[hover]?.[0] : undefined;
   const nearest = (s: ChartSeries, t: number) => s.points.reduce((b, p) => (Math.abs(p[0] - t) < Math.abs(b[0] - t) ? p : b), s.points[0]!);
   const yTicks = compact ? [] : niceTicks(lo, hi, H >= 220 ? 5 : 4).filter((v) => v >= lo && v <= hi);
-  const xTicks = compact ? [] : timeTicks(t0, t1, 6);
+  const wide = plotW >= 420;
+  // About one time label per 85px of data; none under the forecast's date.
+  const dataPx = (plotW * geo.dataRight) / W;
+  const datePx = geo.zone && wide ? (geo.fcHitsLimit ? 175 : 100) : 0;
+  const forecastDate = (
+    <span className="absolute right-0 whitespace-nowrap bg-tile pl-1.5 text-amber" title={new Date(geo.fcEnd).toLocaleString()}>
+      {geo.fcHitsLimit && limit !== undefined && limit !== null && <>hits {formatValue(limit, unit)} · </>}
+      {new Date(geo.fcEnd).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}
+    </span>
+  );
+  const xTicks = compact ? [] : timeTicks(t0, t1, Math.max(2, Math.min(6, Math.floor(dataPx / 85)))).filter((t) => !geo.zone || (x(t) / W) * plotW + 28 < Math.min(plotW - datePx, (geo.dataRight / W) * plotW + 8));
   const multiDay = t1 - t0 > 36 * HOUR;
   const fmtTick = (t: number) => {
     const d = new Date(t);
@@ -145,7 +179,6 @@ export function LineChart({
       ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
       : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   };
-  const lastData = longest.points[longest.points.length - 1]?.[0] ?? t1;
 
   return (
     <div className={clsx('relative', className)}>
@@ -160,7 +193,7 @@ export function LineChart({
           ))}
         </div>
       )}
-      <div className="relative min-w-0 flex-1">
+      <div ref={plotRef} className="relative min-w-0 flex-1">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
@@ -171,7 +204,9 @@ export function LineChart({
         onMouseMove={(e) => {
           if (compact || !longest.points.length) return;
           const r = (e.currentTarget as SVGElement).getBoundingClientRect();
-          const t = t0 + ((e.clientX - r.left) / r.width) * (t1 - t0);
+          const px = ((e.clientX - r.left) / r.width) * W;
+          if (px > geo.dataRight + 2) return setHover(null);
+          const t = geo.tAt(px);
           let best = 0;
           longest.points.forEach((p, i) => { if (Math.abs(p[0] - t) < Math.abs(longest.points[best]![0] - t)) best = i; });
           setHover(best);
@@ -190,9 +225,12 @@ export function LineChart({
             <line x1={0} x2={W} y1={H} y2={H} stroke="rgb(var(--edge))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
           </>
         )}
-        {/* Where the data ends and the forecast begins. */}
-        {!compact && geo.fcEnd > lastData && (
-          <line x1={x(lastData)} x2={x(lastData)} y1={0} y2={H} stroke="rgb(var(--muted))" strokeOpacity={0.45} strokeDasharray="2 3" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        {/* Now: where the data ends and the forecast zone begins. */}
+        {geo.zone > 0 && (
+          <>
+            <rect x={geo.dataRight} y={0} width={W - geo.dataRight} height={H} fill="rgb(var(--muted))" opacity={0.05} />
+            <line x1={geo.dataRight} x2={geo.dataRight} y1={0} y2={H} stroke="rgb(var(--muted))" strokeOpacity={0.5} strokeDasharray="2 3" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          </>
         )}
         {series.map((s, i) => s.band && (
           <rect key={`b-${s.key}`} x={x(s.points[0]?.[0] ?? t0)} width={Math.max(0, x(s.points[s.points.length - 1]?.[0] ?? t1) - x(s.points[0]?.[0] ?? t0))}
@@ -219,7 +257,7 @@ export function LineChart({
           if (!s.forecast || !s.points.length) return null;
           const last = s.points[s.points.length - 1]!;
           const end = geo.fcEnd;
-          const v = last[1] + (s.forecast.slopePerHour * (end - last[0])) / 3_600_000;
+          const v = geo.fcHitsLimit && limit !== undefined && limit !== null ? limit : last[1] + (s.forecast.slopePerHour * (end - last[0])) / 3_600_000;
           return (
             <line key={`f-${s.key}`} x1={x(last[0])} y1={y(last[1])} x2={x(end)} y2={y(v)} stroke={s.color ?? seriesColor(i)} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
           );
@@ -228,8 +266,8 @@ export function LineChart({
           <line x1={x(hoverAt)} x2={x(hoverAt)} y1={0} y2={H} stroke="rgb(var(--muted))" strokeOpacity={0.5} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         )}
       </svg>
-      {!compact && geo.fcEnd > lastData && (
-        <span className="pointer-events-none absolute top-1 whitespace-nowrap font-mono text-[10px] text-dim" style={{ left: `${(x(lastData) / W) * 100}%`, transform: 'translateX(5px)' }}>forecast →</span>
+      {!compact && geo.zone > 0 && (
+        <span className="pointer-events-none absolute top-1 whitespace-nowrap font-mono text-[10px] text-dim" style={{ left: `${(geo.dataRight / W) * 100}%`, transform: 'translateX(6px)' }}>now{wide && ' · forecast →'}</span>
       )}
       </div>
       </div>
@@ -238,7 +276,7 @@ export function LineChart({
       {!compact && (
         <div className="relative ml-14 mt-1.5 h-3.5 font-mono text-[10px] leading-none text-muted" aria-hidden>
           {xTicks.map((t) => {
-            const at = ((x(t) - pad) / (W - pad * 2)) * 100;
+            const at = ((x(t) - pad) / (geo.dataRight - pad)) * 100;
             // Labels at the very edges hang inwards instead of being cut off.
             const shift = at < 6 ? '0%' : at > 94 ? '-100%' : '-50%';
             return (
@@ -247,8 +285,12 @@ export function LineChart({
               </span>
             );
           })}
+          {/* Under the forecast: when it gets there, as a date, not a time on the data's clock. */}
+          {geo.zone > 0 && wide && forecastDate}
         </div>
       )}
+      {/* On a narrow chart the date gets its own line, so the times above keep their room. */}
+      {!compact && geo.zone > 0 && !wide && <div className="relative ml-14 mt-1 h-3.5 font-mono text-[10px] leading-none">{forecastDate}</div>}
 
       {hoverAt !== undefined && (
         <div className="pointer-events-none absolute right-2 top-2 max-w-[70%] rounded-inner border border-edge bg-tile/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur">
