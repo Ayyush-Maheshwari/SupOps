@@ -5,7 +5,7 @@ import { clsx } from 'clsx';
 import { THREAT_LABEL, messageText } from '@supops/shared';
 import {
   AlertTriangle, ArrowLeft, Ban, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleSlash, Pin, PinOff,
-  Radio, Server, ShieldAlert, Terminal, User, X,
+  Info, Radio, Server, ShieldAlert, Terminal, User, X,
 } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useRunStream } from '../lib/useRunStream';
@@ -44,6 +44,7 @@ export function RunDetail() {
   const run = detail.data?.run;
   const isLive = run && ['running', 'queued', 'awaiting_approval', 'suspended'].includes(run.status);
   const advisory = !!run?.policySnapshot?.advisory;
+  const readOnly = !!run?.policySnapshot?.unattended;
 
   // Follow the output while the run is live -- but only while the reader is already
   // at the bottom. Scrolling up to read something releases the auto-scroll (the
@@ -134,6 +135,11 @@ export function RunDetail() {
                   Advisory · no system access
                 </span>
               )}
+              {!advisory && readOnly && (
+                <span className="chip border-cyan/30 bg-cyan/10 text-cyan" title="Started automatically: it can look, never change anything.">
+                  Read-only diagnosis
+                </span>
+              )}
               <span>{run.model}</span>
               {shownTargets.length > 0 && (
                 <span className="inline-flex items-center gap-1">
@@ -217,6 +223,27 @@ export function RunDetail() {
           </div>
         )}
       </header>
+      {/* Why a run only told you what was wrong, and how to let it fix things. */}
+      {(advisory || readOnly) && !isLive && (
+        <div className="flex items-start gap-2.5 border-b border-hairline bg-amber/[0.05] px-6 py-3 text-[12.5px] leading-relaxed text-ink/85">
+          <Info size={15} className="mt-0.5 shrink-0 text-amber" />
+          <p>
+            {advisory ? (
+              <>
+                <span className="font-medium text-ink">This run could only advise.</span> The project has no machine or cluster SupOps can reach, so it
+                cannot run anything itself; the commands above are for you. To let it fix things (each change with your approval), add the machine as an SSH
+                target or the cluster as a Kubernetes target on <Link to="/targets" className="text-blue-text hover:underline">Targets</Link>.
+              </>
+            ) : (
+              <>
+                <span className="font-medium text-ink">This was the automatic read-only diagnosis:</span> it looks, it never changes anything. To fix it,
+                press <span className="font-medium text-ink">Investigate</span> on the incident (or on the signal): that run starts from this diagnosis and
+                proposes the fix, and every change waits for your approval.
+              </>
+            )}
+          </p>
+        </div>
+      )}
 
       <div className={clsx('mx-auto w-full max-w-4xl space-y-3 px-6 pt-6', canFollowUp ? 'pb-1' : 'pb-6')}>
         {detail.data.steps.map((step) => {

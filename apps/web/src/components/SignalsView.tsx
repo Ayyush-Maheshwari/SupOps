@@ -551,7 +551,7 @@ function SingleChart({ watch: w, item, hours, color }: { watch: Watch; item: Wat
           {d?.forecast && <span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-blue" /> Where it is heading</span>}
           {d?.limit && <span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-red/70" /> Runs out at {formatValue(d.limit.value, w.unit)}</span>}
         </div>
-        <button className="btn-ghost !min-h-[32px] !px-3 text-xs" disabled={investigate.isPending} onClick={() => investigate.mutate()} title="A read-only investigation of this, starting from what the watcher sees">
+        <button className="btn-ghost !min-h-[32px] !px-3 text-xs" disabled={investigate.isPending} onClick={() => investigate.mutate()} title="Finds out why and proposes the fix. Every change waits for your approval.">
           {investigate.isPending ? <Spinner className="!h-3 !w-3" /> : <Search size={13} />} Investigate
         </button>
       </div>

@@ -382,8 +382,9 @@ observabilityRoutes.get('/watches/:id/combined', async (req, res) => {
 });
 
 /**
- * Investigate one series: a read-only run (like the automatic diagnosis) that starts
- * from what the watcher sees about it, on the machine it belongs to when known.
+ * Investigate one series, as a person asked: diagnose from what the watcher sees and
+ * fix it, on the machine it belongs to when known. Like Investigate on an incident,
+ * every change waits for a person's approval (only automatic runs are read-only).
  */
 observabilityRoutes.post('/watches/:id/investigate', (req, res) => {
   const w = db.select().from(watches).where(eq(watches.id, req.params.id)).get();
@@ -411,12 +412,13 @@ observabilityRoutes.post('/watches/:id/investigate', (req, res) => {
   const r = startRun({
     projectId: w.projectId,
     agentId,
-    task: `${w.title} on ${row.name}: ${row.reasons[0] ?? fmt(row.value)}. Find out why, and whether anything needs to be done.\n\n${facts}`,
+    task: `${w.title} on ${row.name}: ${row.reasons[0] ?? fmt(row.value)}. Find out why and fix it; if nothing needs fixing, say so and why.`,
     ...(row.targetId ? { targetIds: [row.targetId] } : {}),
     trigger: 'chat',
     triggerPayload: { watchId: w.id, series: row.series },
     startedBy: req.user?.id ?? null,
-    unattended: true,
+    // Diagnose, then fix through approvals: the incident fix prompt, with what the watcher sees as evidence.
+    incident: { evidence: `WHAT THE WATCHER SEES (cite as [E1]):\n[E1] ${facts.replace(/\n/g, '\n    ')}`, mode: 'fix' },
   });
   if (!r.ok) {
     res.status(r.code).json({ error: r.error });
