@@ -2,6 +2,16 @@
 
 Thanks for helping. Bug reports, fixes, new risk rules and documentation are all welcome.
 
+## How to contribute
+
+1. **Fork** the repository on GitHub and clone your fork.
+2. **Create a branch** for your change: `git checkout -b fix-disk-forecast`.
+3. **Make the change**, with a test for it, and run the checks below.
+4. **Open a pull request** against `main` in this repository. CI runs the type check, the tests and
+   the web build on it automatically; a maintainer reviews it and merges it.
+
+For a larger change, open an issue first so we can agree on the approach before you spend time on it.
+
 ## Getting set up
 
 You need Node.js 22 or newer.

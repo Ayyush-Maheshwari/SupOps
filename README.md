@@ -2,15 +2,16 @@
 
 # ⚡ SupOps
 
-### An AI SRE that **actually fixes things** — not just tells you what's wrong.
+### Open-source AIOps that goes from **alert to root cause to fix**, with you approving every change.
 
-Point it at your servers, describe a problem in plain English, and it investigates from real
-evidence and acts — while every risky action stops for your approval.
+AI root cause analysis, human-in-the-loop auto-remediation and predictive alerting, on top of the
+Prometheus, Grafana and Alertmanager you already run. Self-hosted, and works with any model.
 
 ![Self-hosted](https://img.shields.io/badge/self--hosted-100%25-0A84FF?style=flat-square)
 ![Runs on Docker](https://img.shields.io/badge/docker-one%20command-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-3C873A?style=flat-square&logo=node.js&logoColor=white)
 ![Model agnostic](https://img.shields.io/badge/LLM-Gemini%20%C2%B7%20Ollama%20%C2%B7%20OpenAI--compatible-8A63D2?style=flat-square)
+![AIOps](https://img.shields.io/badge/AIOps-alert%20%E2%86%92%20fix-E5484D?style=flat-square)
 ![Human in the loop](https://img.shields.io/badge/risky%20actions-need%20approval-F5A623?style=flat-square)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
 
@@ -20,13 +21,39 @@ evidence and acts — while every risky action stops for your approval.
 
 ## 👀 What it looks like
 
-**Dashboard — everything at a glance: what's running, what's healthy, what's waiting on you.**
+**Dashboard: everything at a glance, what's running, what's healthy, what's waiting on you.**
 
 ![SupOps dashboard](docs/images/dashboard.png)
+
+<table>
+<tr>
+<td width="50%"><b>Approvals: the agent proposes, you decide.</b><br><img src="docs/images/approvals.png" alt="An approval waiting for a decision"></td>
+<td width="50%"><b>Signals: every series watched, with a forecast of when it hits its limit.</b><br><img src="docs/images/signals.png" alt="A disk forecast on the Signals page"></td>
+</tr>
+<tr>
+<td colspan="2"><b>Service map: built from your documents and architecture diagrams, confirmed against what is running.</b><br><img src="docs/images/service-map.png" alt="The service map in Knowledge"></td>
+</tr>
+</table>
 
 ---
 
 ## 🤔 What is SupOps?
+
+SupOps is an AIOps platform that closes the loop your monitoring leaves open. Your observability
+stack tells you something is wrong; SupOps works out why and fixes it:
+
+- 🔎 **AI root cause analysis.** Related alerts become one incident, a fixed set of read-only checks
+  gathers evidence from your metrics and logs, and the diagnosis cites that evidence for every claim.
+- 🛠️ **Human-in-the-loop auto-remediation.** Fixes run over SSH or `kubectl`, and every change waits for
+  your approval. Destructive commands are blocked outright.
+- 📈 **Predictive alerting.** Every series of your key signals is watched, with anomaly detection and
+  forecasts like *"disk full in 11 hours"*, before anyone gets paged.
+- 🧠 **Runbook-aware.** Your runbooks and docs guide every run, and your service map is built from your
+  documents and architecture diagrams.
+- 🔒 **Self-hosted and LLM-agnostic.** Gemini, Ollama or any OpenAI-compatible model. Credentials and
+  telemetry stay inside your infrastructure.
+- ⚡ **Zero agents.** It plugs into Prometheus, Grafana, Alertmanager, Loki, Elasticsearch, Kubernetes
+  and Slack. Nothing to install on your servers.
 
 Most "AI for ops" tools stop at a paragraph of advice. SupOps goes one step further: it **runs
 the commands**. You describe a symptom (*"checkout is returning 500s since 14:20"*), and an agent
@@ -131,6 +158,7 @@ SupOps is organised around a few simple screens:
 | 🔎 **Investigate** | Describe a symptom → the agent finds the root cause and proposes/does the fix. One-shot. |
 | 💬 **Console** | A back-and-forth assistant for everyday work ("how many pods are down on prod?"). You watch every command run live in the terminal panel. |
 | 📈 **Observability** | Alerts grouped into incidents, each with an evidence pack and an automatic read-only diagnosis; signals watched for what is unusual and what is about to run out. |
+| 📚 **Knowledge** | Runbooks, notes and facts every run is given, and the service map: what depends on what, from your documents and diagrams. |
 | ❤️ **Health** | Antivirus-style scans of your fleet — **Quick** (fast essentials) or **Deep** (thorough AI investigation), run on demand or on a timer (15m–24h). Surfaces issues you can investigate in one click. |
 | 🔔 **Alerts** | Alerts from Slack and from Alertmanager, Prometheus or Grafana connections, each already diagnosed read-only; Investigate starts the fix, with approval for every change. |
 | ▶️ **Runs** | The full history of everything the agents did — each run's commands, outputs, risk, and outcome. Export a run as a shareable PDF/Markdown report. |
@@ -226,12 +254,11 @@ to be installed or configured on their side.
   series is left out for want of storage. Each series gets a score for how close it is to
   trouble, with the reason in words, for example "runs out in 12h", "+6σ vs last day" or
   "1.9, at or above 1.5".
-- **The Signals page** shows, under each headline (Resources, Kubernetes, Traffic,
-  Monitoring stack, Custom), everything watched there, worst first, by signal or by machine,
-  with search. Beside it are live graphs of the two nearest to trouble, showing their usual
-  range, where they are heading and their limit. Clicking anything in the list puts it in the
-  graph. A **Most at risk** strip shows the worst few across all headlines, and
-  **Investigate** on a graph starts a read-only investigation of that series.
+- **The Signals page** lists every watched query under its headline (Resources, Kubernetes,
+  Traffic, Monitoring stack, Custom), with what needs a look on top. Pick one and its graph
+  shows all its series together, up to 50; pick a series for its own graph with its usual
+  range, where it is heading and when it reaches its limit, as a date. **Investigate** on a
+  series diagnoses it and proposes the fix, with your approval for every change.
 - **Predictions.** Something unusual is reported once it has held for two checks and is unlike
   this time yesterday, so a nightly job is not news every night. A resource heading for its
   limit within 24 hours opens an incident before any alert fires.
@@ -243,6 +270,27 @@ to be installed or configured on their side.
 
 Closed alerts and incidents, observations and metric samples are kept for 15 days (change it
 in **Settings → Observability**). Open ones are never removed.
+
+---
+
+## 🗺️ Service map
+
+**Knowledge → Service map** shows what depends on what: load balancers, services, databases,
+queues and the machines they run on. Click a component to see what breaks if it fails and what
+it relies on. Runs and incident diagnoses are given the connected systems as context, and alerts
+on related systems join one incident.
+
+- **Built from what you describe.** The model reads your approved documents, and every change it
+  finds comes back as a suggestion with the quote behind it, for you to accept or reject.
+- **From an architecture diagram.** **From a diagram** takes a draw.io file (read exactly, no model
+  needed), a picture of a diagram (PNG, JPG or SVG, read by a vision model), or Mermaid, PlantUML
+  or Graphviz text. What it shows becomes suggestions too.
+- **Confirmed live.** **Check live** compares the map with registered targets, connections on your
+  machines, Kubernetes and metrics. It never adds anything on its own: it marks connections as
+  confirmed, and flags a documented one that is not there (*documented, not seen*).
+- **Editable.** Add, edit, merge or remove components and connections. Entries a person edits are
+  never overwritten automatically, and anyone who is not an admin makes suggestions. An admin can
+  delete the whole map and build it again.
 
 ---
 
@@ -374,7 +422,7 @@ what may run unattended — extend it alongside the rules.
 ✅ Durable agent loop with crash recovery · five-stage risk engine · approval suspend/resume with
 roles and a second-approver option · configurable autonomy per project and agent · SSH execution
 (with jump-host support) · Kubernetes cluster targets · Prometheus, Grafana, Loki, Elasticsearch
-and Alertmanager connections · alert import, incident grouping, evidence packs and automatic read-only diagnosis · anomaly detection and resource forecasts · encrypted credentials · live run streaming · health scans (quick &
+and Alertmanager connections · alert import, incident grouping, evidence packs and automatic read-only diagnosis · anomaly detection and resource forecasts · service map from documents and architecture diagrams, confirmed live · encrypted credentials · live run streaming · health scans (quick &
 deep, scheduled or manual) · knowledge base of runbooks, notes and facts · feedback and corrections
 on agent replies · automatic run-history clean-up · multiple user accounts · one-command Docker
 image · shareable PDF/Markdown run reports · installable web app.
@@ -386,8 +434,13 @@ multi-step scripts with per-line risk checks · rules learned from past denials.
 
 ## 🤝 Contributing
 
-Issues and pull requests are welcome: see [CONTRIBUTING.md](CONTRIBUTING.md). Please report
-security problems privately, as described in [SECURITY.md](SECURITY.md), and follow the
+Contributions are welcome, from a typo fix to a new risk rule. Fork the repository, make your change
+on a branch, and open a pull request against `main`; the checks run on it automatically. Good first
+contributions are new risk rules with test cases, evidence checks for more exporters, and docs.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the details.
+
+If SupOps is useful to you, a ⭐ helps other teams find it. Please report security problems
+privately, as described in [SECURITY.md](SECURITY.md), and follow the
 [code of conduct](CODE_OF_CONDUCT.md).
 
 ## 📄 License and credits
