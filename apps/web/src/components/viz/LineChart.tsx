@@ -27,6 +27,32 @@ export const seriesColor = (i: number) => (i < PALETTE.length ? PALETTE[i]! : `h
 
 const W = 600;
 
+/** About `count` round values between lo and hi (1, 2, 2.5 or 5 times a power of ten apart). */
+export function niceTicks(lo: number, hi: number, count = 4): number[] {
+  const span = hi - lo;
+  if (!(span > 0) || !Number.isFinite(span)) return [lo];
+  const raw = span / count;
+  const pow = 10 ** Math.floor(Math.log10(raw));
+  const step = ([1, 2, 2.5, 5, 10].find((m) => m * pow >= raw) ?? 10) * pow;
+  const out: number[] = [];
+  for (let v = Math.ceil(lo / step) * step; v <= hi + step * 1e-9; v += step) out.push(Math.abs(v) < step * 1e-9 ? 0 : v);
+  return out;
+}
+
+const MIN = 60_000;
+const HOUR = 3_600_000;
+const TIME_STEPS = [5 * MIN, 10 * MIN, 15 * MIN, 30 * MIN, HOUR, 2 * HOUR, 3 * HOUR, 6 * HOUR, 12 * HOUR, 24 * HOUR, 48 * HOUR, 7 * 24 * HOUR];
+
+/** Round local times across a window: on the hour, every few hours, at midnight... */
+export function timeTicks(t0: number, t1: number, max = 6): number[] {
+  const step = TIME_STEPS.find((s) => (t1 - t0) / s <= max) ?? TIME_STEPS[TIME_STEPS.length - 1]!;
+  // Align to the local clock, so ticks fall on 12:00 or midnight, not on 11:37.
+  const tz = new Date(t0).getTimezoneOffset() * MIN;
+  const out: number[] = [];
+  for (let t = Math.ceil((t0 - tz) / step) * step + tz; t <= t1; t += step) out.push(t);
+  return out;
+}
+
 export function LineChart({
   series,
   unit,
@@ -87,11 +113,20 @@ export function LineChart({
     const m = (hi - lo) * 0.08;
     hi += m;
     lo = lo === 0 ? 0 : lo - m;
+    if (!compact) {
+      // End the axis on round values, so its top and bottom gridlines carry a label.
+      const t = niceTicks(lo, hi, H >= 220 ? 5 : 4);
+      const step = t.length > 1 ? t[1]! - t[0]! : 0;
+      if (step > 0) {
+        hi = Math.ceil(hi / step - 1e-9) * step;
+        if (lo !== 0) lo = Math.floor(lo / step + 1e-9) * step;
+      }
+    }
     if (t1 === t0) t0 -= 60_000;
     const x = (t: number) => pad + ((t - t0) / (t1 - t0)) * (W - pad * 2);
     const y = (v: number) => H - pad - ((v - lo) / (hi - lo)) * (H - pad * 2);
     return { t0, t1, lo, hi, x, y, fcEnd };
-  }, [series, H, pad, unit, limit]);
+  }, [series, H, pad, unit, limit, compact]);
 
   if (!geo) {
     return <div className={clsx('grid place-items-center text-[11px] text-muted', className)} style={{ height }}>{empty}</div>;
@@ -100,14 +135,32 @@ export function LineChart({
   const longest = series.reduce((a, s) => (s.points.length > a.points.length ? s : a), series[0]!);
   const hoverAt = hover !== null ? longest.points[hover]?.[0] : undefined;
   const nearest = (s: ChartSeries, t: number) => s.points.reduce((b, p) => (Math.abs(p[0] - t) < Math.abs(b[0] - t) ? p : b), s.points[0]!);
-  const fmtTime = (t: number) => {
+  const yTicks = compact ? [] : niceTicks(lo, hi, H >= 220 ? 5 : 4).filter((v) => v >= lo && v <= hi);
+  const xTicks = compact ? [] : timeTicks(t0, t1, 6);
+  const multiDay = t1 - t0 > 36 * HOUR;
+  const fmtTick = (t: number) => {
     const d = new Date(t);
-    return t1 - t0 > 36 * 3_600_000 ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+    const midnight = d.getHours() === 0 && d.getMinutes() === 0;
+    return multiDay || (midnight && t1 - t0 > 12 * HOUR)
+      ? d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })
+      : d.toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
   };
+  const lastData = longest.points[longest.points.length - 1]?.[0] ?? t1;
 
   return (
     <div className={clsx('relative', className)}>
-      <div className="relative">
+      <div className="flex">
+      {/* The value axis: round values beside their gridlines. HTML, so it never stretches. */}
+      {!compact && (
+        <div className="relative w-14 shrink-0" style={{ height: H }} aria-hidden>
+          {yTicks.map((v) => (
+            <span key={v} className="absolute right-2 -translate-y-1/2 whitespace-nowrap font-mono text-[10px] leading-none text-muted" style={{ top: `${(y(v) / H) * 100}%` }}>
+              {formatValue(v, unit)}
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="relative min-w-0 flex-1">
       <svg
         viewBox={`0 0 ${W} ${H}`}
         preserveAspectRatio="none"
@@ -125,9 +178,22 @@ export function LineChart({
         }}
         onMouseLeave={() => setHover(null)}
       >
-        {!compact && [0.25, 0.5, 0.75].map((f) => (
-          <line key={f} x1={0} x2={W} y1={H * f} y2={H * f} stroke="rgb(var(--hairline))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        {yTicks.map((v) => (
+          <line key={`y${v}`} x1={0} x2={W} y1={y(v)} y2={y(v)} stroke="rgb(var(--hairline))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
         ))}
+        {xTicks.map((t) => (
+          <line key={`x${t}`} x1={x(t)} x2={x(t)} y1={0} y2={H} stroke="rgb(var(--hairline))" strokeOpacity={0.5} strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        ))}
+        {!compact && (
+          <>
+            <line x1={0} x2={0} y1={0} y2={H} stroke="rgb(var(--edge))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+            <line x1={0} x2={W} y1={H} y2={H} stroke="rgb(var(--edge))" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+          </>
+        )}
+        {/* Where the data ends and the forecast begins. */}
+        {!compact && geo.fcEnd > lastData && (
+          <line x1={x(lastData)} x2={x(lastData)} y1={0} y2={H} stroke="rgb(var(--muted))" strokeOpacity={0.45} strokeDasharray="2 3" strokeWidth={1} vectorEffect="non-scaling-stroke" />
+        )}
         {series.map((s, i) => s.band && (
           <rect key={`b-${s.key}`} x={x(s.points[0]?.[0] ?? t0)} width={Math.max(0, x(s.points[s.points.length - 1]?.[0] ?? t1) - x(s.points[0]?.[0] ?? t0))}
             y={y(s.band.high)} height={Math.max(1, y(s.band.low) - y(s.band.high))} fill={s.color ?? seriesColor(i)} opacity={0.07} />
@@ -162,22 +228,26 @@ export function LineChart({
           <line x1={x(hoverAt)} x2={x(hoverAt)} y1={0} y2={H} stroke="rgb(var(--muted))" strokeOpacity={0.5} strokeWidth={1} vectorEffect="non-scaling-stroke" />
         )}
       </svg>
-      {!compact && (
-        <>
-          <span className="pointer-events-none absolute left-1 top-0.5 font-mono text-[10px] text-muted">{formatValue(hi, unit)}</span>
-          <span className="pointer-events-none absolute bottom-0.5 left-1 font-mono text-[10px] text-muted">{formatValue(lo, unit)}</span>
-        </>
+      {!compact && geo.fcEnd > lastData && (
+        <span className="pointer-events-none absolute top-1 whitespace-nowrap font-mono text-[10px] text-dim" style={{ left: `${(x(lastData) / W) * 100}%`, transform: 'translateX(5px)' }}>forecast →</span>
       )}
       </div>
+      </div>
 
+      {/* The time axis: round times under their gridlines. */}
       {!compact && (
-        <>
-          <div className="mt-1 flex justify-between font-mono text-[10px] text-dim">
-            <span>{fmtTime(t0)}</span>
-            {geo.fcEnd > (longest.points[longest.points.length - 1]?.[0] ?? t1) && <span className="text-muted">forecast →</span>}
-            <span>{fmtTime(t1)}</span>
-          </div>
-        </>
+        <div className="relative ml-14 mt-1.5 h-3.5 font-mono text-[10px] leading-none text-muted" aria-hidden>
+          {xTicks.map((t) => {
+            const at = ((x(t) - pad) / (W - pad * 2)) * 100;
+            // Labels at the very edges hang inwards instead of being cut off.
+            const shift = at < 6 ? '0%' : at > 94 ? '-100%' : '-50%';
+            return (
+              <span key={t} className="absolute whitespace-nowrap" style={{ left: `${(x(t) / W) * 100}%`, transform: `translateX(${shift})` }}>
+                {fmtTick(t)}
+              </span>
+            );
+          })}
+        </div>
       )}
 
       {hoverAt !== undefined && (

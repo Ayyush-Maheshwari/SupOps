@@ -6,8 +6,9 @@ import { dependenciesOf, impactOf } from '@supops/core';
 import { isAdmin } from '../auth.ts';
 import { db } from '../context.ts';
 import { audit } from '../services/audit.ts';
-import { applyChange, enqueueDocForMap } from '../servicemap/docs.ts';
-import { lastDiscovery, runDiscovery } from '../servicemap/discover.ts';
+import { applyChange, enqueueDocForMap, mapDiagram } from '../servicemap/docs.ts';
+import { DIAGRAM_PREFIX } from '@supops/shared';
+import { clearDiscovery, lastDiscovery, runDiscovery } from '../servicemap/discover.ts';
 import { mapWithConfidence, projectItems, projectLinks } from '../servicemap/store.ts';
 
 /**
@@ -33,7 +34,7 @@ serviceMapRoutes.get('/', (req, res) => {
   const pending = db.select({ id: ciProposals.id }).from(ciProposals).where(and(eq(ciProposals.projectId, projectId), eq(ciProposals.status, 'pending'))).all().length;
   // Evidence references in words: which document, which machine.
   const refName = (source: string, ref: string) => {
-    if (source === 'doc') return docs.get(ref)?.title ?? 'a removed document';
+    if (source === 'doc') return ref.startsWith(DIAGRAM_PREFIX) ? ref.slice(DIAGRAM_PREFIX.length) : docs.get(ref)?.title ?? 'a removed document';
     if (source === 'target') return tById.get(ref)?.slug ?? 'a target';
     const tid = ref.replace(/^scan:/, '').split(':')[0]!;
     return tById.get(tid)?.slug ?? null;
@@ -53,6 +54,35 @@ serviceMapRoutes.get('/', (req, res) => {
     pending,
     discovery: lastDiscovery(projectId),
   });
+});
+
+/**
+ * Delete the whole map: every component, connection, piece of evidence and
+ * suggestion. Admins only. Documents and diagrams are untouched, so the map can be
+ * built again from them.
+ */
+serviceMapRoutes.delete('/', (req, res) => {
+  const projectId = projectOf(req);
+  if (!projectId) {
+    res.status(400).json({ error: 'projectId is required' });
+    return;
+  }
+  if (!isAdmin(req.user)) {
+    res.status(403).json({ error: 'Only an admin can delete the service map.' });
+    return;
+  }
+  const removed = db.transaction((tx) => {
+    const items = tx.select({ id: ciItems.id }).from(ciItems).where(eq(ciItems.projectId, projectId)).all().length;
+    const links = tx.select({ id: ciLinks.id }).from(ciLinks).where(eq(ciLinks.projectId, projectId)).all().length;
+    tx.delete(ciEvidence).where(eq(ciEvidence.projectId, projectId)).run();
+    tx.delete(ciProposals).where(eq(ciProposals.projectId, projectId)).run();
+    tx.delete(ciLinks).where(eq(ciLinks.projectId, projectId)).run();
+    tx.delete(ciItems).where(eq(ciItems.projectId, projectId)).run();
+    return { items, links };
+  });
+  clearDiscovery(projectId);
+  audit(req.user, { projectId, entity: 'service-map', action: 'delete-map', after: removed });
+  res.json(removed);
 });
 
 /** What a failure of this component reaches, and what it relies on. */
@@ -274,7 +304,33 @@ serviceMapRoutes.post('/proposals/accept-all', (req, res) => {
 
 // ---- building ----------------------------------------------------------------------------
 
-/** Look at everything live now (targets, machines, clusters, metrics). */
+/**
+ * An architecture diagram: a picture (read by the model), a draw.io file (read
+ * exactly), or Mermaid / PlantUML / Graphviz text. Its changes become suggestions.
+ */
+const diagramInput = z.object({
+  projectId: z.string().min(1),
+  name: z.string().trim().min(1).max(120),
+  text: z.string().max(4_000_000).optional(),
+  image: z.string().regex(/^data:image\/(png|jpeg|webp|gif);base64,/, 'A PNG, JPEG, WebP or GIF picture').max(11_000_000).optional(),
+}).refine((v) => !!v.text !== !!v.image, 'Send either the diagram text or a picture of it.');
+
+serviceMapRoutes.post('/from-diagram', async (req, res) => {
+  const body = diagramInput.safeParse(req.body);
+  if (!body.success) {
+    res.status(400).json({ error: body.error.issues[0]?.message ?? 'Invalid diagram' });
+    return;
+  }
+  const r = await mapDiagram(body.data.projectId, body.data);
+  if ('error' in r) {
+    res.status(422).json({ error: r.error });
+    return;
+  }
+  audit(req.user, { projectId: body.data.projectId, entity: 'service-map', action: 'from-diagram', after: { name: body.data.name, proposals: r.proposals } });
+  res.json(r);
+});
+
+/** Check the map against everything live now (targets, machines, clusters, metrics). Adds nothing. */
 serviceMapRoutes.post('/discover', async (req, res) => {
   const projectId = String(req.body?.projectId ?? '');
   if (!projectId) {

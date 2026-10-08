@@ -226,7 +226,6 @@ function Legend() {
     <div className={clsx('absolute bottom-3 left-3 hidden flex-wrap items-center gap-x-3 gap-y-1 rounded-inner border border-edge bg-tile/90 px-2.5 py-1.5 text-[10px] text-muted backdrop-blur sm:flex')}>
       {row(undefined, 'rgb(var(--muted))', 'Confirmed')}
       {row('6 4', 'rgb(var(--muted))', 'Documented')}
-      {row('2 4', 'rgb(var(--muted))', 'Seen live')}
       {row('6 4', 'rgb(var(--red))', 'Documented, not seen')}
     </div>
   );

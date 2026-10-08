@@ -1,6 +1,6 @@
 import { eq } from 'drizzle-orm';
 import { ciItems, settings } from '@supops/db';
-import type { CiType } from '@supops/db';
+import type { CiLinkKind, CiSource } from '@supops/db';
 import type { ResolvedTarget } from '@supops/core';
 import {
   IGNORED_PORTS,
@@ -16,15 +16,15 @@ import {
   resolveSecret,
   sshExec,
 } from '@supops/core';
-import { isObservabilityKind } from '@supops/shared';
 import { db } from '../context.ts';
-import { findItem, projectItems, pruneObserved, upsertItem, upsertLink } from './store.ts';
+import { addEvidence, findItem, projectItems, projectLinks, pruneObserved } from './store.ts';
 
 /**
- * Discovery: what is actually there, from every live source SupOps can read. Each
- * source is independent -- a project with no documents, or machines that are not
- * registered, still gets a map from what the others can see -- and each fact it adds
- * carries its own evidence. Everything here is read-only.
+ * Live checks. The map is what your documents, diagrams and people say; these only
+ * confirm it against what is running -- registered targets, connections on machines,
+ * Kubernetes, metrics -- and never add a component or a connection of their own.
+ * A documented connection a machine scan should have seen but did not shows as drift.
+ * Everything here is read-only.
  */
 
 export interface DiscoveryReport {
@@ -33,8 +33,11 @@ export interface DiscoveryReport {
   archived: { items: number; links: number };
 }
 
+type Evidence = { source: CiSource; ref: string; detail?: string | null };
+
 const SPLIT = '__SUPOPS_SPLIT__';
 const KEEP_OBSERVED_MS = 15 * 86_400_000;
+const DEP: CiLinkKind[] = ['depends_on', 'reads_from', 'writes_to', 'routes_to', 'replicates_to'];
 
 function withSecret(t: ResolvedTarget): ResolvedTarget {
   const s = resolveSecret(db, t);
@@ -51,87 +54,109 @@ const ctxFor = (t: ResolvedTarget, timeoutMs = 25_000) => ({
   onNewHostKey: (fp: string) => pinHostKey(db, t.id, fp),
 });
 
-/** Every registered machine, cluster and connection is a component. */
+/** What runs on a component (its `runs_on` children), optionally only what serves `port`. */
+function servicesOn(projectId: string, hostId: string, port?: number): string[] {
+  const links = projectLinks(projectId).filter((l) => l.kind === 'runs_on' && l.toId === hostId);
+  if (!links.length) return [];
+  const items = new Map(projectItems(projectId).map((i) => [i.id, i]));
+  const all = links.map((l) => items.get(l.fromId)).filter((i): i is NonNullable<typeof i> => !!i);
+  if (port === undefined) return all.map((i) => i.id);
+  const wk = WELL_KNOWN[port]?.name;
+  const exact = all.filter((i) => i.attrs.port === String(port) || (!!wk && normalizeName(i.name).includes(wk)));
+  return exact.map((i) => i.id);
+}
+
+/**
+ * Seen live: a goes to b. Confirms every documented connection that says so, at the
+ * machine level or the service level ("web-1 depends on postgresql on db-1"). Adds
+ * nothing when the map does not have it.
+ */
+function confirmBetween(projectId: string, aId: string, bId: string, e: Evidence, port?: number): number {
+  if (aId === bId) return 0;
+  const from = new Set([aId, ...servicesOn(projectId, aId)]);
+  const to = new Set([bId, ...servicesOn(projectId, bId, port)]);
+  let n = 0;
+  for (const l of projectLinks(projectId)) {
+    if (DEP.includes(l.kind) && from.has(l.fromId) && to.has(l.toId)) {
+      addEvidence(projectId, { linkId: l.id }, e);
+      n++;
+    }
+  }
+  return n;
+}
+
+/** Seen live: this component exists. Only for one already on the map. */
+function confirmItem(projectId: string, names: { key?: string; name: string; aliases?: string[] }, e: Evidence): string | null {
+  const hit = findItem(projectId, names);
+  if (!hit) return null;
+  addEvidence(projectId, { itemId: hit.id }, e);
+  return hit.id;
+}
+
+/** Registered machines, clusters and connections, matched to components on the map by name or address. */
 export function fromTargets(projectId: string): { checked: number; found: number; errors: string[] } {
   const ts = loadTargets(db, projectId);
+  let found = 0;
   for (const t of ts) {
     const cfg = t.config as { kind: string; host?: string; addresses?: string[]; via?: { alias?: string }; baseUrl?: string };
-    const type: CiType = t.kind === 'ssh' ? 'host' : t.kind === 'k8s' ? 'cluster' : isObservabilityKind(t.kind) ? 'monitoring' : 'service';
     const aliases = [
       ...(cfg.via?.alias ? [cfg.via.alias] : cfg.host ? [cfg.host] : []),
       ...(cfg.addresses ?? []),
       ...(cfg.baseUrl ? [(() => { try { return new URL(cfg.baseUrl!).hostname; } catch { return ''; } })()] : []),
     ].filter(Boolean);
-    upsertItem(projectId, { key: t.slug, name: t.slug, type, env: t.env, description: t.description, aliases, targetId: t.id }, { source: 'target', ref: t.id, detail: `registered ${t.kind} target ${t.slug}` });
+    const hit = findItem(projectId, { targetId: t.id, key: t.slug, name: t.slug, aliases });
+    if (!hit) continue;
+    // Its health and incidents now show on the map.
+    if (!hit.targetId) db.update(ciItems).set({ targetId: t.id, updatedAt: new Date() }).where(eq(ciItems.id, hit.id)).run();
+    addEvidence(projectId, { itemId: hit.id }, { source: 'target', ref: t.id, detail: `registered ${t.kind} target ${t.slug}` });
+    found++;
   }
-  return { checked: ts.length, found: ts.length, errors: [] };
+  return { checked: ts.length, found, errors: [] };
 }
 
-/** The service a port is, on a host: typed when the port is well known. */
-function serviceOn(projectId: string, hostKey: string, hostName: string, port: number, process: string | null, ref: string, detail: string) {
-  const wk = WELL_KNOWN[port];
-  const svcName = wk?.name ?? process ?? `port ${port}`;
-  // One component per port on a host, whichever side saw it and whether or not it knew the process.
-  const key = `${port}@${hostKey}`;
-  const item = upsertItem(projectId, { key, name: `${svcName} on ${hostName}`, type: wk?.type ?? 'service', attrs: { port: String(port), ...(process ? { process } : {}) } }, { source: 'network', ref, detail });
-  if (item.name.startsWith(`port ${port} on `) && svcName !== `port ${port}` && !item.locked) {
-    return db.update(ciItems).set({ name: `${svcName} on ${hostName}`, updatedAt: new Date() }).where(eq(ciItems.id, item.id)).returning().get();
-  }
-  return item;
-}
-
-/** What each registered machine listens on and talks to (`ss`, read-only). */
+/** On each registered machine that is on the map: what it listens on and talks to (`ss`, read-only). */
 export async function fromNetwork(projectId: string): Promise<{ checked: number; found: number; errors: string[] }> {
   const hosts = loadTargets(db, projectId).filter((t) => t.kind === 'ssh');
   const errors: string[] = [];
   let found = 0;
+  let checked = 0;
   for (const t of hosts) {
+    const host = findItem(projectId, { targetId: t.id, name: t.slug });
+    if (!host || host.targetId !== t.id) continue;
+    checked++;
     const out = await sshExec(`ss -tlnpH 2>/dev/null || ss -tlnH; echo ${SPLIT}; ss -tnpH state established 2>/dev/null || ss -tnH state established`, ctxFor(t)).catch((e: Error) => ({ ok: false, text: e.message }));
     if (!out.ok || !out.text.includes(SPLIT)) {
       errors.push(`${t.slug}: ${out.text.split('\n')[0]?.slice(0, 160) ?? 'no answer'}`);
       continue;
     }
     const [listenText, connText] = out.text.split(SPLIT);
-    const host = findItem(projectId, { targetId: t.id, name: t.slug })!;
     // The scan itself: a documented connection from here that it does not see is drift.
-    upsertItem(projectId, { key: host.key, name: host.name, type: 'host', targetId: t.id }, { source: 'network', ref: `scan:${t.id}`, detail: 'connections checked' });
+    addEvidence(projectId, { itemId: host.id }, { source: 'network', ref: `scan:${t.id}`, detail: 'connections checked' });
 
     const listening = parseListening(listenText ?? '');
     const listenPorts = new Set(listening.map((l) => l.port));
     for (const l of listening) {
       if (IGNORED_PORTS.has(l.port)) continue;
-      const interesting = WELL_KNOWN[l.port] || [80, 443, 8080, 8443].includes(l.port) || (l.process && l.port >= 1024 && l.port < 10_000);
-      if (!interesting) continue;
-      const svc = serviceOn(projectId, host.key, host.name, l.port, l.process, `${t.id}:listen:${l.port}`, `listening on ${l.port}${l.process ? ` (${l.process})` : ''}`);
-      upsertLink(projectId, svc.id, host.id, 'runs_on', { source: 'network', ref: `${t.id}:listen:${l.port}`, detail: `seen on ${t.slug}` });
-      found++;
-    }
-
-    for (const c of parseConnections(connText ?? '').slice(0, 300)) {
-      const outbound = !listenPorts.has(c.localPort) && c.peerPort < 32_768 && !IGNORED_PORTS.has(c.peerPort);
-      if (outbound) {
-        const known = findItem(projectId, { name: c.peer });
-        const wk = WELL_KNOWN[c.peerPort];
-        const peer = known ?? upsertItem(projectId, { name: c.peer, type: wk ? 'host' : 'external', aliases: [] }, { source: 'network', ref: `${t.id}:peer:${c.peer}`, detail: `connected to from ${t.slug}` });
-        const target = wk || known?.type === 'host' ? serviceOn(projectId, peer.key, peer.name, c.peerPort, null, `${t.id}:out:${c.peer}:${c.peerPort}`, `${t.slug} connects to ${c.peer}:${c.peerPort}`) : peer;
-        if (target.id !== peer.id) upsertLink(projectId, target.id, peer.id, 'runs_on', { source: 'network', ref: `${t.id}:out:${c.peer}:${c.peerPort}`, detail: `${c.peer}:${c.peerPort}` });
-        upsertLink(projectId, host.id, target.id, 'depends_on', { source: 'network', ref: `${t.id}:out:${c.peer}:${c.peerPort}`, detail: `${t.slug}${c.process ? ` (${c.process})` : ''} -> ${c.peer}:${c.peerPort}` }, { detail: `tcp/${c.peerPort}` });
-        found++;
-      } else if (listenPorts.has(c.localPort) && !IGNORED_PORTS.has(c.localPort)) {
-        // Someone we know connects to a service here: they depend on it.
-        const client = findItem(projectId, { name: c.peer });
-        if (!client || client.id === host.id) continue;
-        const svc = serviceOn(projectId, host.key, host.name, c.localPort, null, `${t.id}:in:${c.peer}:${c.localPort}`, `${client.name} connects in on ${c.localPort}`);
-        upsertLink(projectId, svc.id, host.id, 'runs_on', { source: 'network', ref: `${t.id}:listen:${c.localPort}`, detail: `seen on ${t.slug}` });
-        upsertLink(projectId, client.id, svc.id, 'depends_on', { source: 'network', ref: `${t.id}:in:${c.peer}:${c.localPort}`, detail: `${c.peer} -> ${t.slug}:${c.localPort}` }, { detail: `tcp/${c.localPort}` });
+      for (const svc of servicesOn(projectId, host.id, l.port)) {
+        addEvidence(projectId, { itemId: svc }, { source: 'network', ref: `${t.id}:listen:${l.port}`, detail: `listening on ${l.port}${l.process ? ` (${l.process})` : ''}` });
         found++;
       }
     }
+    for (const c of parseConnections(connText ?? '').slice(0, 300)) {
+      const outbound = !listenPorts.has(c.localPort) && c.peerPort < 32_768 && !IGNORED_PORTS.has(c.peerPort);
+      const peer = findItem(projectId, { name: c.peer });
+      if (!peer || peer.id === host.id) continue;
+      if (outbound) {
+        found += confirmBetween(projectId, host.id, peer.id, { source: 'network', ref: `${t.id}:out:${c.peer}:${c.peerPort}`, detail: `${t.slug}${c.process ? ` (${c.process})` : ''} -> ${c.peer}:${c.peerPort}` }, c.peerPort);
+      } else if (listenPorts.has(c.localPort) && !IGNORED_PORTS.has(c.localPort)) {
+        found += confirmBetween(projectId, peer.id, host.id, { source: 'network', ref: `${t.id}:in:${c.peer}:${c.localPort}`, detail: `${c.peer} -> ${t.slug}:${c.localPort}` }, c.localPort);
+      }
+    }
   }
-  return { checked: hosts.length, found, errors };
+  return { checked, found, errors };
 }
 
-/** Workloads, services, ingresses and configured connections, from each cluster. */
+/** Workloads and the connections in their settings, from each cluster: confirming what the map has. */
 export async function fromKubernetes(projectId: string): Promise<{ checked: number; found: number; errors: string[] }> {
   const clusters = loadTargets(db, projectId).filter((t) => t.kind === 'k8s');
   const errors: string[] = [];
@@ -153,75 +178,67 @@ export async function fromKubernetes(projectId: string): Promise<{ checked: numb
         errors.push(`${t.slug}: the cluster's answer was too large or not JSON`);
       }
     }
-    const cluster = findItem(projectId, { targetId: t.id, name: t.slug });
     const parsed = parseKubernetes({ items: objects as never }, t.slug);
+    const ids = new Map<string, string>();
     for (const it of parsed.items) {
-      const row = upsertItem(projectId, it, { source: 'kubernetes', ref: `${t.id}:${it.key}`, detail: it.attrs.kubernetes ?? null });
-      if (cluster) upsertLink(projectId, row.id, cluster.id, 'runs_on', { source: 'kubernetes', ref: `${t.id}:${it.key}`, detail: `in cluster ${t.slug}` });
-      found++;
+      const id = confirmItem(projectId, it, { source: 'kubernetes', ref: `${t.id}:${it.key}`, detail: it.attrs.kubernetes ?? null });
+      if (id) {
+        ids.set(it.key, id);
+        found++;
+      }
     }
     for (const l of parsed.links) {
-      const from = findItem(projectId, { key: l.from, name: l.from });
-      if (!from) continue;
-      const to = (l.toIsKey ? findItem(projectId, { key: l.to, name: l.to }) : findItem(projectId, { name: l.to })) ??
-        upsertItem(projectId, { name: l.to, type: 'external' }, { source: 'kubernetes', ref: `${t.id}:host:${l.to}`, detail: `named in ${from.name}'s settings` });
-      upsertLink(projectId, from.id, to.id, l.kind, { source: 'kubernetes', ref: `${t.id}:${l.from}:${l.to}:${l.kind}`, detail: l.detail }, { detail: l.detail });
-      found++;
+      const from = ids.get(l.from) ?? findItem(projectId, { key: l.from, name: l.from })?.id;
+      const to = (l.toIsKey ? ids.get(l.to) : undefined) ?? findItem(projectId, { key: l.to, name: l.to })?.id;
+      if (from && to) found += confirmBetween(projectId, from, to, { source: 'kubernetes', ref: `${t.id}:${l.from}:${l.to}:${l.kind}`, detail: l.detail });
     }
   }
   return { checked: clusters.length, found, errors };
 }
 
-const GENERIC_JOB = /^(node|nodes|node[-_]exporter|prometheus|kubelet|cadvisor|kube[-_].*|kubernetes[-_].*|apiserver|blackbox|serviceMonitor\/.*)$/i;
-const EXPORTERS: Array<{ metric: string; name: string; type: CiType }> = [
-  { metric: 'pg_up', name: 'postgresql', type: 'database' },
-  { metric: 'mysql_up', name: 'mysql', type: 'database' },
-  { metric: 'mongodb_up', name: 'mongodb', type: 'database' },
-  { metric: 'redis_up', name: 'redis', type: 'cache' },
-  { metric: 'memcached_up', name: 'memcached', type: 'cache' },
-  { metric: 'rabbitmq_identity_info', name: 'rabbitmq', type: 'queue' },
-  { metric: 'kafka_brokers', name: 'kafka', type: 'queue' },
-  { metric: 'elasticsearch_cluster_health_status', name: 'elasticsearch', type: 'database' },
-  { metric: 'nginx_up', name: 'nginx', type: 'load_balancer' },
-  { metric: 'haproxy_up', name: 'haproxy', type: 'load_balancer' },
+const EXPORTERS: Array<{ metric: string; name: string }> = [
+  { metric: 'pg_up', name: 'postgresql' },
+  { metric: 'mysql_up', name: 'mysql' },
+  { metric: 'mongodb_up', name: 'mongodb' },
+  { metric: 'redis_up', name: 'redis' },
+  { metric: 'memcached_up', name: 'memcached' },
+  { metric: 'rabbitmq_identity_info', name: 'rabbitmq' },
+  { metric: 'kafka_brokers', name: 'kafka' },
+  { metric: 'elasticsearch_cluster_health_status', name: 'elasticsearch' },
+  { metric: 'nginx_up', name: 'nginx' },
+  { metric: 'haproxy_up', name: 'haproxy' },
 ];
 
-/** What metrics reveal: scraped machines, exporters (= services) on them, and service-to-service traffic. */
+/** What metrics show about components on the map: scraped machines, exporters on them, traced traffic. */
 export async function fromMetrics(projectId: string): Promise<{ checked: number; found: number; errors: string[] }> {
   const conns = loadTargets(db, projectId).filter((t) => t.kind === 'prometheus' || t.kind === 'grafana').map(withSecret);
   const errors: string[] = [];
   let found = 0;
   for (const c of conns) {
-    const self = findItem(projectId, { targetId: c.id, name: c.slug });
     const up = await promInstant(c, 'count by (job, instance) (up)');
     if ('error' in up) {
       errors.push(`${c.slug}: ${up.error.slice(0, 160)}`);
       continue;
     }
-    const hostByInstance = new Map<string, string>();
     for (const s of up.samples.slice(0, 1000)) {
       const job = s.metric.job ?? '';
       const instance = s.metric.instance ?? '';
       if (!instance) continue;
-      const perVmJob = job && !GENERIC_JOB.test(job);
-      const name = perVmJob ? normalizeName(job) : normalizeName(instance);
-      const nodeLike = /node|windows/i.test(job);
-      const row = upsertItem(projectId, { name, type: nodeLike ? 'host' : 'service', aliases: [instance, ...(perVmJob ? [job] : [])] }, { source: 'metrics', ref: `${c.id}:up:${job}:${instance}`, detail: `scraped by ${c.slug} as job ${job}` });
-      hostByInstance.set(instance, row.id);
-      if (self) upsertLink(projectId, self.id, row.id, 'monitors', { source: 'metrics', ref: `${c.id}:up:${job}:${instance}` });
-      found++;
+      // A per-machine job ("billing-node-metrics") names the machine; otherwise the instance does.
+      if (confirmItem(projectId, { name: instance, aliases: job ? [job] : [] }, { source: 'metrics', ref: `${c.id}:up:${job}:${instance}`, detail: `scraped by ${c.slug} as job ${job}` })) found++;
     }
     for (const ex of EXPORTERS) {
       const r = await promInstant(c, `count by (instance, job) (${ex.metric})`);
       if ('error' in r) continue;
       for (const s of r.samples.slice(0, 200)) {
-        const instance = s.metric.instance ?? '';
-        const host = findItem(projectId, { name: instance }) ?? findItem(projectId, { name: s.metric.job ?? '' });
-        const hostKey = host?.key ?? normalizeName(instance);
-        const port = Object.entries(WELL_KNOWN).find(([, v]) => v.name === ex.name)?.[0];
-        const svc = upsertItem(projectId, { key: port ? `${port}@${hostKey}` : `${ex.name}@${hostKey}`, name: `${ex.name} on ${host?.name ?? hostKey}`, type: ex.type, aliases: [] }, { source: 'metrics', ref: `${c.id}:${ex.metric}:${instance}`, detail: `${ex.metric} exported by ${instance}` });
-        if (host) upsertLink(projectId, svc.id, host.id, 'runs_on', { source: 'metrics', ref: `${c.id}:${ex.metric}:${instance}` });
-        found++;
+        const host = findItem(projectId, { name: s.metric.instance ?? '', aliases: s.metric.job ? [s.metric.job] : [] });
+        if (!host) continue;
+        const items = new Map(projectItems(projectId).map((i) => [i.id, i]));
+        for (const id of servicesOn(projectId, host.id)) {
+          if (!normalizeName(items.get(id)?.name ?? '').includes(ex.name)) continue;
+          addEvidence(projectId, { itemId: id }, { source: 'metrics', ref: `${c.id}:${ex.metric}:${s.metric.instance}`, detail: `${ex.metric} exported by ${s.metric.instance}` });
+          found++;
+        }
       }
     }
     // Traffic between services, where tracing or a mesh records it.
@@ -233,13 +250,9 @@ export async function fromMetrics(projectId: string): Promise<{ checked: number;
       const r = await promInstant(c, g.q);
       if ('error' in r) continue;
       for (const s of r.samples.slice(0, 500)) {
-        const a = g.from(s.metric);
-        const b = g.to(s.metric);
-        if (!a || !b || a === b || a === 'unknown' || b === 'unknown') continue;
-        const ia = findItem(projectId, { name: a }) ?? upsertItem(projectId, { name: a, type: 'service' }, { source: 'metrics', ref: `${c.id}:svc:${a}`, detail: g.label });
-        const ib = findItem(projectId, { name: b }) ?? upsertItem(projectId, { name: b, type: 'service' }, { source: 'metrics', ref: `${c.id}:svc:${b}`, detail: g.label });
-        upsertLink(projectId, ia.id, ib.id, 'depends_on', { source: 'metrics', ref: `${c.id}:${g.label}:${a}:${b}`, detail: `${g.label}: ${s.value.toFixed(2)}/s` });
-        found++;
+        const a = findItem(projectId, { name: g.from(s.metric) });
+        const b = findItem(projectId, { name: g.to(s.metric) });
+        if (a && b) found += confirmBetween(projectId, a.id, b.id, { source: 'metrics', ref: `${c.id}:${g.label}:${a.key}:${b.key}`, detail: `${g.label}: ${s.value.toFixed(2)}/s` });
       }
     }
   }
@@ -277,6 +290,11 @@ export async function runDiscovery(projectId: string): Promise<DiscoveryReport |
   } finally {
     running.delete(projectId);
   }
+}
+
+/** Forget the last live check (when the map is deleted). */
+export function clearDiscovery(projectId: string): void {
+  db.delete(settings).where(eq(settings.key, key(projectId))).run();
 }
 
 export const projectHasMap = (projectId: string) => projectItems(projectId).length > 0;

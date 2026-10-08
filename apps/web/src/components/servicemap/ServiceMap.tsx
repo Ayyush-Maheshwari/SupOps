@@ -2,13 +2,15 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { ArrowRight, BookOpen, Check, FileText, GitMerge, Maximize2, Minimize2, Network, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
+import { ArrowRight, BookOpen, Check, FileImage, FileText, GitMerge, Maximize2, Minimize2, Network, Pencil, Plus, RefreshCw, Search, Trash2, X } from 'lucide-react';
 import { api, del, patch, post } from '../../lib/api';
 import { timeAgo } from '../../lib/format';
 import { CERTAINTY, DRIFT, KIND_LABEL, SOURCE_LABEL, TYPE_META, healthOf } from '../../lib/servicemap';
 import type { CiLinkKind, CiType, MapItem, MapLink, Proposal, ServiceMapData } from '../../lib/servicemap';
 import { Empty, Field, Segmented, Spinner } from '../ui';
 import { MapGraph, type Highlight } from './MapGraph';
+import { DiagramImport } from './DiagramImport';
+import { DIAGRAM_PREFIX } from '@supops/shared';
 
 /**
  * The service map, in the Knowledge page: what the project is made of and how the
@@ -40,13 +42,19 @@ export function ServiceMap({ projectId, isAdmin, expanded, onToggleExpand }: { p
   const [showMonitoring, setShowMonitoring] = useState(false);
   const [form, setForm] = useState<{ kind: 'item'; existing?: MapItem } | { kind: 'link'; existing?: MapLink; fromId?: string } | null>(null);
   const [note, setNote] = useState<string | null>(null);
+  const [diagram, setDiagram] = useState(false);
+  const [wipe, setWipe] = useState(false);
   const refresh = () => void qc.invalidateQueries({ queryKey: ['serviceMap', projectId] });
 
   const discover = useMutation({
     mutationFn: () => post<{ sources: Record<string, { found: number; errors: string[] }> }>('/service-map/discover', { projectId }),
     onSuccess: (r) => {
       const errs = Object.values(r.sources).flatMap((s) => s.errors);
-      setNote(errs.length ? `Looked at everything live. Some sources could not be read: ${errs.slice(0, 2).join('; ')}${errs.length > 2 ? '…' : ''}` : 'Looked at everything live: targets, machines, clusters and metrics.');
+      const found = Object.values(r.sources).reduce((a, s) => a + s.found, 0);
+      setNote(
+        `Checked the map against what is running: ${found} confirmation${found === 1 ? '' : 's'}. Nothing is added this way; the map comes from your documents, diagrams and edits.` +
+          (errs.length ? ` Some sources could not be read: ${errs.slice(0, 2).join('; ')}${errs.length > 2 ? '…' : ''}` : ''),
+      );
       refresh();
     },
     onError: (e) => setNote((e as Error).message),
@@ -113,7 +121,7 @@ export function ServiceMap({ projectId, isAdmin, expanded, onToggleExpand }: { p
               {items.length} components · {(d?.links ?? []).filter((l) => l.kind !== 'monitors').length} connections
               {counts.notSeen > 0 && <span className="text-red"> · {counts.notSeen} documented but not seen</span>}
               {counts.notDocumented > 0 && <span className="text-cyan"> · {counts.notDocumented} not documented</span>}
-              {disc && <span className="text-dim"> · looked live {timeAgo(disc.at)}</span>}
+              {disc && <span className="text-dim"> · checked live {timeAgo(disc.at)}</span>}
             </p>
           </div>
           <button className="btn-ghost !min-h-[32px] !px-2" onClick={onToggleExpand} aria-label={expanded ? 'Shrink' : 'Expand'} title={expanded ? 'Shrink' : 'Full width'}>
@@ -121,14 +129,24 @@ export function ServiceMap({ projectId, isAdmin, expanded, onToggleExpand }: { p
           </button>
         </div>
         <div className="flex flex-wrap items-center gap-1.5">
-          <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" disabled={discover.isPending} onClick={() => { setNote(null); discover.mutate(); }} title="Read targets, live connections on machines, Kubernetes and metrics now">
-            {discover.isPending ? <Spinner className="!h-3 !w-3" /> : <RefreshCw size={13} />} Discover
-          </button>
           <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" disabled={fromDocs.isPending} onClick={() => { setNote(null); fromDocs.mutate(); }} title="Read every approved document for components and dependencies">
             <BookOpen size={13} /> From documents
           </button>
+          <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" onClick={() => { setNote(null); setDiagram(true); }} title="A picture, draw.io file, or Mermaid / PlantUML / Graphviz text of your architecture">
+            <FileImage size={13} /> From a diagram
+          </button>
           <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" onClick={() => setForm({ kind: 'item' })}><Plus size={13} /> Component</button>
           <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" onClick={() => setForm({ kind: 'link' })} disabled={items.length < 2}><Plus size={13} /> Connection</button>
+          {isAdmin && (items.length > 0 || (d?.pending ?? 0) > 0) && (
+            <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs text-red hover:border-red/40" onClick={() => setWipe(true)} title="Delete every component, connection and suggestion">
+              <Trash2 size={13} /> Delete map
+            </button>
+          )}
+          {items.length > 0 && (
+            <button className="btn-ghost !min-h-[32px] !px-2.5 text-xs" disabled={discover.isPending} onClick={() => { setNote(null); discover.mutate(); }} title="Confirm the map against registered targets, connections on machines, Kubernetes and metrics. Adds nothing.">
+              {discover.isPending ? <Spinner className="!h-3 !w-3" /> : <RefreshCw size={13} />} Check live
+            </button>
+          )}
         </div>
       </header>
 
@@ -165,8 +183,13 @@ export function ServiceMap({ projectId, isAdmin, expanded, onToggleExpand }: { p
         <Empty
           icon={<Network size={28} />}
           title="No service map yet"
-          hint="Press Discover to build it from your registered targets, live connections on your machines, Kubernetes and metrics; and From documents to add what your runbooks and notes describe (you review each change). You can also add components by hand."
-          action={<button className="btn-primary" disabled={discover.isPending} onClick={() => discover.mutate()}>{discover.isPending ? <Spinner /> : <RefreshCw size={14} />} Discover now</button>}
+          hint="The map is built from what your documents and architecture diagrams describe, and what you add by hand; you review every change. Your live systems then confirm it, and show where a document is out of date."
+          action={
+            <div className="flex flex-wrap justify-center gap-2">
+              <button className="btn-primary" onClick={() => setDiagram(true)}><FileImage size={14} /> From a diagram</button>
+              <button className="btn-ghost" disabled={fromDocs.isPending} onClick={() => fromDocs.mutate()}><BookOpen size={14} /> From documents</button>
+            </div>
+          }
         />
       ) : view === 'suggestions' ? (
         <Suggestions projectId={projectId} isAdmin={isAdmin} onChanged={refresh} />
@@ -202,6 +225,23 @@ export function ServiceMap({ projectId, isAdmin, expanded, onToggleExpand }: { p
         </div>
       )}
 
+      {wipe && (
+        <Modal title="Delete the service map?" onClose={() => setWipe(false)}>
+          <DeleteMap
+            projectId={projectId}
+            components={items.length}
+            connections={(d?.links ?? []).length}
+            pending={d?.pending ?? 0}
+            onDone={(msg) => { setWipe(false); setSel(null); setView('map'); setNote(msg); refresh(); void qc.invalidateQueries({ queryKey: ['mapProposals'] }); }}
+            onCancel={() => setWipe(false)}
+          />
+        </Modal>
+      )}
+      {diagram && (
+        <Modal title="Map from a diagram" onClose={() => setDiagram(false)}>
+          <DiagramImport projectId={projectId} onDone={(msg) => { setDiagram(false); setNote(msg); setView('suggestions'); refresh(); void qc.invalidateQueries({ queryKey: ['mapProposals'] }); }} />
+        </Modal>
+      )}
       {form && (
         <Modal title={form.kind === 'item' ? (form.existing ? `Edit ${form.existing.name}` : 'Add a component') : form.existing ? 'Edit connection' : 'Add a connection'} onClose={() => setForm(null)}>
           {form.kind === 'item' ? (
@@ -234,7 +274,7 @@ function EvidenceList({ evidence }: { evidence: MapItem['evidence'] }) {
       {evidence.map((e) => (
         <li key={e.id} className="text-[12px] leading-snug">
           <div className="flex items-baseline gap-1.5">
-            <span className="font-medium text-ink/90">{SOURCE_LABEL[e.source]}</span>
+            <span className="font-medium text-ink/90">{e.source === 'doc' && e.ref.startsWith(DIAGRAM_PREFIX) ? 'Diagram' : SOURCE_LABEL[e.source]}</span>
             {e.refName && (e.source === 'doc' ? <span className="truncate text-blue-text">{e.refName}</span> : <span className="truncate font-mono text-[11px] text-muted">{e.refName}</span>)}
             <span className="ml-auto shrink-0 text-[10.5px] text-dim">{timeAgo(e.lastSeenAt)}</span>
           </div>
@@ -455,7 +495,7 @@ function Suggestions({ projectId, isAdmin, onChanged }: { projectId: string; isA
   }, [list.data]);
 
   if (list.isLoading) return <div className="grid h-40 place-items-center"><Spinner /></div>;
-  if (!groups.length) return <Empty icon={<Check size={24} />} title="Nothing to review" hint="When a document is approved or changes, what it says about your systems shows up here before it changes the map." />;
+  if (!groups.length) return <Empty icon={<Check size={24} />} title="Nothing to review" hint="When a document is approved or changes, or a diagram is imported, what it says about your systems shows up here before it changes the map." />;
   const err = (decide.error ?? all.error) as Error | null;
   return (
     <div className="space-y-3 p-4">
@@ -466,8 +506,8 @@ function Suggestions({ projectId, isAdmin, onChanged }: { projectId: string; isA
       {groups.map((g) => (
         <div key={`${g.origin}${g.ref}`} className="rounded-inner border border-hairline">
           <div className="flex items-center gap-2 border-b border-hairline px-3 py-2">
-            {g.origin === 'doc' ? <FileText size={14} className="shrink-0 text-blue-text" /> : <Pencil size={13} className="shrink-0 text-muted" />}
-            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{g.origin === 'doc' ? `From “${g.title}”` : g.title}</span>
+            {g.ref?.startsWith(DIAGRAM_PREFIX) ? <FileImage size={14} className="shrink-0 text-cyan" /> : g.origin === 'doc' ? <FileText size={14} className="shrink-0 text-blue-text" /> : <Pencil size={13} className="shrink-0 text-muted" />}
+            <span className="min-w-0 flex-1 truncate text-[12.5px] font-medium text-ink">{g.ref?.startsWith(DIAGRAM_PREFIX) ? `From the diagram “${g.title}”` : g.origin === 'doc' ? `From “${g.title}”` : g.title}</span>
             {isAdmin && g.rows.length > 1 && <button className="text-[11px] text-blue-text hover:underline" onClick={() => all.mutate(g.ref ?? undefined)}>Accept these {g.rows.length}</button>}
           </div>
           <ul className="divide-y divide-hairline">
@@ -496,6 +536,31 @@ function Suggestions({ projectId, isAdmin, onChanged }: { projectId: string; isA
 }
 
 // ---- forms --------------------------------------------------------------------------------
+
+function DeleteMap({ projectId, components, connections, pending, onDone, onCancel }: { projectId: string; components: number; connections: number; pending: number; onDone: (msg: string) => void; onCancel: () => void }) {
+  const remove = useMutation({
+    mutationFn: () => del<{ items: number; links: number }>(`/service-map?projectId=${projectId}`),
+    onSuccess: (r) => onDone(`Deleted the service map: ${r.items} component${r.items === 1 ? '' : 's'} and ${r.links} connection${r.links === 1 ? '' : 's'}. Build it again from your documents or a diagram.`),
+  });
+  const n = (v: number, one: string) => `${v} ${one}${v === 1 ? '' : 's'}`;
+  return (
+    <div className="space-y-4">
+      <p className="text-[13px] leading-relaxed text-ink/90">
+        This removes all {n(components, 'component')}, {n(connections, 'connection')}{pending ? ` and ${n(pending, 'pending suggestion')}` : ''}, including everything people added or edited by hand. It cannot be undone.
+      </p>
+      <p className="text-[12px] leading-relaxed text-muted">
+        Your documents and diagrams are not touched: <span className="text-ink/80">From documents</span> or <span className="text-ink/80">From a diagram</span> builds the map again, as suggestions to review.
+      </p>
+      {remove.isError && <p className="text-xs text-red">{(remove.error as Error).message}</p>}
+      <div className="flex gap-2">
+        <button className="btn-primary !bg-red hover:!bg-red/90" disabled={remove.isPending} onClick={() => remove.mutate()}>
+          {remove.isPending ? <Spinner /> : <Trash2 size={14} />} Delete the map
+        </button>
+        <button className="btn-ghost" onClick={onCancel}>Cancel</button>
+      </div>
+    </div>
+  );
+}
 
 function Modal({ title, onClose, children }: { title: string; onClose: () => void; children: React.ReactNode }) {
   return (

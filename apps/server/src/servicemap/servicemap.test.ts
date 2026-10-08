@@ -43,6 +43,9 @@ function seed() {
   const web = t('web-1', { kind: 'ssh', host: '203.0.113.20', port: 22, user: 'ops', sudo: false, addresses: ['10.0.4.21', 'web-1'] });
   const dbh = t('db-1', { kind: 'ssh', host: '203.0.113.21', port: 22, user: 'ops', sudo: false, addresses: ['10.0.5.11'] });
   const prom = t('prom', { kind: 'prometheus', baseUrl: base, allowPrivateNetwork: true }, 'prometheus');
+  // The map comes from documents; registered targets attach to what they describe.
+  upsertItem(project.id, { name: 'web-1', type: 'host', aliases: ['10.0.4.21'] }, { source: 'doc', ref: 'arch' });
+  upsertItem(project.id, { name: 'db-1', type: 'host', aliases: ['10.0.5.11'] }, { source: 'doc', ref: 'arch' });
   fromTargets(project.id);
   return { projectId: project.id, web, dbh, prom };
 }
@@ -87,20 +90,26 @@ test('drift: documented but not seen by a scan that could have; observed but not
   assert.equal(mapWithConfidence(projectId).links.find((l) => l.id === obs.id)!.confidence.drift, 'not_documented');
 });
 
-test('metrics alone build a map: scraped machines, exporters, traced traffic', async () => {
-  const { projectId, web } = seed();
+test('live checks only confirm: they add nothing, and confirm what the documents say', async () => {
+  const { projectId, prom } = seed();
+  assert.equal(findItem(projectId, { name: 'prom' }), undefined, 'a registered target no document describes is not added');
+  const vm = upsertItem(projectId, { name: 'billing-vm', type: 'host', aliases: ['10.0.7.5'] }, { source: 'doc', ref: 'arch' });
+  const pg = upsertItem(projectId, { name: 'postgresql on billing-vm', type: 'database' }, { source: 'doc', ref: 'arch' });
+  upsertLink(projectId, pg.id, vm.id, 'runs_on', { source: 'doc', ref: 'arch' });
+  const checkout = upsertItem(projectId, { name: 'checkout', type: 'service' }, { source: 'doc', ref: 'arch' });
+  const payments = upsertItem(projectId, { name: 'payments', type: 'service' }, { source: 'doc', ref: 'arch' });
+  const call = upsertLink(projectId, checkout.id, payments.id, 'depends_on', { source: 'doc', ref: 'arch' })!;
+  const before = { items: db.select().from(ciItems).where(eq(ciItems.projectId, projectId)).all().length, links: db.select().from(ciLinks).where(eq(ciLinks.projectId, projectId)).all().length };
+
   const r = await fromMetrics(projectId);
   assert.deepEqual(r.errors, []);
-  const billing = findItem(projectId, { name: 'billing' });
-  assert.ok(billing, 'a per-VM job names the machine');
-  assert.ok(billing!.aliases.includes('10.0.7.5:9100'));
-  const pg = findItem(projectId, { key: 'postgresql@billing', name: 'postgresql on billing' });
-  assert.equal(pg?.type, 'database');
-  assert.ok(db.select().from(ciLinks).where(and(eq(ciLinks.fromId, pg!.id), eq(ciLinks.toId, billing!.id), eq(ciLinks.kind, 'runs_on'))).get());
-  assert.equal(findItem(projectId, { name: 'web-1:9100' })?.targetId, web.id, 'scraped instance joins the registered machine');
-  const checkout = findItem(projectId, { name: 'checkout' })!;
-  const payments = findItem(projectId, { name: 'payments' })!;
-  assert.ok(db.select().from(ciLinks).where(and(eq(ciLinks.fromId, checkout.id), eq(ciLinks.toId, payments.id))).get());
+  assert.equal(db.select().from(ciItems).where(eq(ciItems.projectId, projectId)).all().length, before.items, 'no component added (web-1:9100 joins web-1)');
+  assert.equal(db.select().from(ciLinks).where(eq(ciLinks.projectId, projectId)).all().length, before.links, 'no connection added');
+  const sources = (on: { itemId?: string; linkId?: string }) => db.select().from(ciEvidence).where(on.itemId ? eq(ciEvidence.itemId, on.itemId) : eq(ciEvidence.linkId, on.linkId!)).all().map((e) => e.source);
+  assert.ok(sources({ itemId: vm.id }).includes('metrics'), 'the scraped machine is confirmed by its address');
+  assert.ok(sources({ itemId: pg.id }).includes('metrics'), 'its exporter confirms the database on it');
+  assert.equal(mapWithConfidence(projectId).links.find((l) => l.id === call.id)!.confidence.certainty, 'confirmed', 'traced traffic confirms the documented call');
+  assert.ok(prom);
 });
 
 test('pruning archives automatic entries nothing supports any more, never a person\'s', () => {

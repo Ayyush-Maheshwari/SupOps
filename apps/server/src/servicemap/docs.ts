@@ -1,8 +1,10 @@
 import { and, eq, inArray } from 'drizzle-orm';
 import { ciEvidence, ciItems, ciLinks, ciProposals, knowledgeDocs } from '@supops/db';
 import type { CiLinkKind, CiType } from '@supops/db';
-import { EXTRACT_PROMPT, keyFor, parseExtraction, planDocChanges } from '@supops/core';
-import { messageText } from '@supops/shared';
+import { DIAGRAM_PROMPT, EXTRACT_PROMPT, diagramFormat, keyFor, parseDrawio, parseExtraction, planDocChanges } from '@supops/core';
+import type { Extraction } from '@supops/core';
+import { DIAGRAM_PREFIX, messageText } from '@supops/shared';
+import type { ContentPart } from '@supops/shared';
 import { db, llm } from '../context.ts';
 import { addEvidence, dropEvidence, findItem, projectItems, projectLinks, upsertItem, upsertLink } from './store.ts';
 
@@ -74,22 +76,66 @@ export async function mapDocument(docId: string): Promise<{ proposals: number; s
     }
   }
 
-  const prev = previousSupport(projectId, docId);
+  return applyReading(projectId, docId, doc.title, extraction);
+}
+
+/**
+ * What a source (a document or a diagram) now says, against the map: the entries it
+ * supports gain it as evidence, and every change becomes a suggestion, replacing the
+ * suggestions this source made before.
+ */
+function applyReading(projectId: string, ref: string, title: string, extraction: Extraction): { proposals: number; supported: number } {
+  const prev = previousSupport(projectId, ref);
   const items = projectItems(projectId).map((i) => ({ id: i.id, key: i.key, name: i.name, type: i.type, description: i.description, aliases: i.aliases, locked: i.locked }));
   const links = projectLinks(projectId).map((l) => ({ id: l.id, fromId: l.fromId, toId: l.toId, kind: l.kind }));
   const plan = planDocChanges({ extraction, items, links, previousItemIds: prev.itemIds, previousLinkIds: prev.linkIds, docOnlyItemIds: prev.docOnlyItemIds, docOnlyLinkIds: prev.docOnlyLinkIds });
 
   db.transaction(() => {
-    for (const s of plan.supportItems) addEvidence(projectId, { itemId: s.itemId }, { source: 'doc', ref: docId, detail: s.quote ?? doc.title });
-    for (const s of plan.supportLinks) addEvidence(projectId, { linkId: s.linkId }, { source: 'doc', ref: docId, detail: s.quote ?? doc.title });
-    dropEvidence(projectId, { itemIds: plan.dropItemEvidence, linkIds: plan.dropLinkEvidence }, 'doc', docId);
-    // The document's earlier suggestions are replaced by what it says now.
-    db.delete(ciProposals).where(and(eq(ciProposals.projectId, projectId), eq(ciProposals.origin, 'doc'), eq(ciProposals.sourceRef, docId), eq(ciProposals.status, 'pending'))).run();
+    for (const s of plan.supportItems) addEvidence(projectId, { itemId: s.itemId }, { source: 'doc', ref, detail: s.quote ?? title });
+    for (const s of plan.supportLinks) addEvidence(projectId, { linkId: s.linkId }, { source: 'doc', ref, detail: s.quote ?? title });
+    dropEvidence(projectId, { itemIds: plan.dropItemEvidence, linkIds: plan.dropLinkEvidence }, 'doc', ref);
+    db.delete(ciProposals).where(and(eq(ciProposals.projectId, projectId), eq(ciProposals.origin, 'doc'), eq(ciProposals.sourceRef, ref), eq(ciProposals.status, 'pending'))).run();
     for (const p of plan.proposals) {
-      db.insert(ciProposals).values({ projectId, origin: 'doc', sourceRef: docId, sourceTitle: doc.title, op: p.op, payload: p.payload, quote: p.quote ?? null }).run();
+      db.insert(ciProposals).values({ projectId, origin: 'doc', sourceRef: ref, sourceTitle: title, op: p.op, payload: p.payload, quote: p.quote ?? null }).run();
     }
   });
   return { proposals: plan.proposals.length, supported: plan.supportItems.length + plan.supportLinks.length };
+}
+
+// ---- diagrams ------------------------------------------------------------------------------
+
+/** Evidence from a diagram is referenced by its name: importing it again replaces what it said. */
+export const diagramRef = (name: string) => `${DIAGRAM_PREFIX}${name.trim().slice(0, 120)}`;
+
+/**
+ * An architecture diagram into suggestions. A draw.io file (or a draw.io SVG) is read
+ * exactly; a picture is read by the model as an image; Mermaid, PlantUML or Graphviz
+ * text by the model as text.
+ */
+export async function mapDiagram(
+  projectId: string,
+  input: { name: string; text?: string; image?: string },
+): Promise<{ proposals: number; supported: number; components: number; connections: number; read: 'exactly' | 'by the model' } | { error: string }> {
+  const name = input.name.trim() || 'Architecture diagram';
+  let extraction: Extraction | null = input.text ? parseDrawio(input.text) : null;
+  const exact = !!extraction;
+  if (!extraction) {
+    const user: ContentPart[] = input.image
+      ? [{ type: 'text', text: `Diagram "${name}":` }, { type: 'image_url', image_url: { url: input.image } }]
+      : [{ type: 'text', text: `Diagram "${name}" (${diagramFormat(input.text ?? '')}):\n\n${(input.text ?? '').slice(0, MAX_TEXT)}` }];
+    try {
+      const res = await llm.complete([{ role: 'system', content: DIAGRAM_PROMPT }, { role: 'user', content: user }], [], { maxTokens: 6000, temperature: 0 });
+      extraction = parseExtraction(messageText(res.message.content ?? ''));
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { error: input.image ? `The model could not read the picture (it needs a model that accepts images): ${msg}` : `The model could not read the diagram: ${msg}` };
+    }
+  }
+  if (!extraction.items.length && !extraction.links.length) {
+    return { error: exact ? 'No labelled boxes were found in this draw.io file.' : 'No components were found. Is it an architecture diagram with labelled boxes?' };
+  }
+  const r = applyReading(projectId, diagramRef(name), name, extraction);
+  return { ...r, components: extraction.items.length, connections: extraction.links.length, read: exact ? 'exactly' : 'by the model' };
 }
 
 // ---- applying a change ------------------------------------------------------------------

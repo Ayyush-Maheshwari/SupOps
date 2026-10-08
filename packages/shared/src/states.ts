@@ -160,3 +160,6 @@ export const OPEN_HEALTH_ISSUE_STATES: readonly HealthIssueState[] = ['open', 'i
  */
 export const BECOME_METHODS = ['none', 'sudo', 'su', 'sudo-su'] as const;
 export type BecomeMethod = (typeof BECOME_METHODS)[number];
+
+/** Service map evidence from an imported diagram is referenced as `diagram:<name>`. */
+export const DIAGRAM_PREFIX = 'diagram:';

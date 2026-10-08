@@ -23,6 +23,8 @@ app.use(cors());
 app.use('/api/runs', express.json({ limit: '16mb' }));
 // Knowledge imports carry up to five documents of 10 MB each, base64-encoded.
 app.use('/api/knowledge/import', express.json({ limit: '70mb' }));
+// A diagram picture or draw.io file for the service map.
+app.use('/api/service-map/from-diagram', express.json({ limit: '12mb' }));
 app.use(express.json({ limit: '1mb' }));
 app.use('/api', api);
 
