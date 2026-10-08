@@ -161,6 +161,8 @@ export function LineChart({
   const nearest = (s: ChartSeries, t: number) => s.points.reduce((b, p) => (Math.abs(p[0] - t) < Math.abs(b[0] - t) ? p : b), s.points[0]!);
   const yTicks = compact ? [] : niceTicks(lo, hi, H >= 220 ? 5 : 4).filter((v) => v >= lo && v <= hi);
   const wide = plotW >= 420;
+  // The value axis is as wide as its longest label (monospace, ~6.2px a character), no wider.
+  const gutter = compact ? 0 : Math.ceil(Math.max(2, ...yTicks.map((v) => formatValue(v, unit).length)) * 6.2) + 8;
   // About one time label per 85px of data; none under the forecast's date.
   const dataPx = (plotW * geo.dataRight) / W;
   const datePx = geo.zone && wide ? (geo.fcHitsLimit ? 175 : 100) : 0;
@@ -185,9 +187,9 @@ export function LineChart({
       <div className="flex">
       {/* The value axis: round values beside their gridlines. HTML, so it never stretches. */}
       {!compact && (
-        <div className="relative w-14 shrink-0" style={{ height: H }} aria-hidden>
+        <div className="relative shrink-0" style={{ height: H, width: gutter }} aria-hidden>
           {yTicks.map((v) => (
-            <span key={v} className="absolute right-2 -translate-y-1/2 whitespace-nowrap font-mono text-[10px] leading-none text-muted" style={{ top: `${(y(v) / H) * 100}%` }}>
+            <span key={v} className="absolute right-1.5 -translate-y-1/2 whitespace-nowrap font-mono text-[10px] leading-none text-muted" style={{ top: `${(y(v) / H) * 100}%` }}>
               {formatValue(v, unit)}
             </span>
           ))}
@@ -274,7 +276,7 @@ export function LineChart({
 
       {/* The time axis: round times under their gridlines. */}
       {!compact && (
-        <div className="relative ml-14 mt-1.5 h-3.5 font-mono text-[10px] leading-none text-muted" aria-hidden>
+        <div className="relative mt-1.5 h-3.5 font-mono text-[10px] leading-none text-muted" style={{ marginLeft: gutter }} aria-hidden>
           {xTicks.map((t) => {
             const at = ((x(t) - pad) / (geo.dataRight - pad)) * 100;
             // Labels at the very edges hang inwards instead of being cut off.
@@ -290,7 +292,7 @@ export function LineChart({
         </div>
       )}
       {/* On a narrow chart the date gets its own line, so the times above keep their room. */}
-      {!compact && geo.zone > 0 && !wide && <div className="relative ml-14 mt-1 h-3.5 font-mono text-[10px] leading-none">{forecastDate}</div>}
+      {!compact && geo.zone > 0 && !wide && <div className="relative mt-1 h-3.5 font-mono text-[10px] leading-none" style={{ marginLeft: gutter }}>{forecastDate}</div>}
 
       {hoverAt !== undefined && (
         <div className="pointer-events-none absolute right-2 top-2 max-w-[70%] rounded-inner border border-edge bg-tile/95 px-2.5 py-1.5 text-[11px] shadow-lg backdrop-blur">
