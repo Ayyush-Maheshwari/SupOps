@@ -197,7 +197,9 @@ test('query_metrics forecast says when a disk runs out', async () => {
     const out = await queryMetricsTool.execute({ target: 'p', operation: 'forecast', query: 'node_filesystem_avail_bytes', limit_value: 0, limit_when: 'below' }, ctx(conn('prometheus', be.base)));
     assert.equal(out.ok, true, out.text);
     assert.match(out.text, /reaches 0 in about 3[78]h/);
-    assert.match(out.text, /confidence high/);
+    // Half a day of perfectly steady fill: worth acting on, but high needs days of history.
+    assert.match(out.text, /confidence medium/);
+    assert.match(out.text, /Model: steady trend/);
   } finally {
     await be.close();
   }

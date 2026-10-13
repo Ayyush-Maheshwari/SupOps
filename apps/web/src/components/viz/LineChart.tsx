@@ -14,8 +14,11 @@ export interface ChartSeries {
   name: string;
   points: Array<[number, number]>;
   band?: { low: number; high: number } | null;
-  /** Continue the line at `slopePerHour` until `untilMs` (or 24h). */
-  forecast?: { slopePerHour: number; etaMs: number | null } | null;
+  /**
+   * Continue the line at `slopePerHour` until `etaMs` (or a stretch ahead) -- or, with
+   * `path`, follow the model's forecast ([time, expected, low, high]) and its band.
+   */
+  forecast?: { slopePerHour: number; etaMs: number | null; path?: Array<[number, number, number, number]> } | null;
   flagged?: boolean;
   /** Its own colour, e.g. the one it has in a combined graph; else by position. */
   color?: string;
@@ -109,9 +112,13 @@ export function LineChart({
       const span = Math.max(t1 - t0, HOUR);
       const last = fc.points[fc.points.length - 1]!;
       fcHitsLimit = fc.forecast.etaMs !== null && fc.forecast.etaMs > 0;
-      fcEnd = last[0] + (fcHitsLimit ? fc.forecast.etaMs! : span * 0.35);
+      const path = fc.forecast.path ?? [];
+      // A model's path shows at least two days ahead, so its daily pattern reads as one.
+      fcEnd = last[0] + (fcHitsLimit ? fc.forecast.etaMs! : path.length ? Math.min(path[path.length - 1]![0] - last[0], Math.max(span * 0.35, 48 * HOUR)) : span * 0.35);
       // Reaching the limit ends exactly on it (not a rounding hair past, which would stretch the axis).
-      ext.push(fcHitsLimit && limit !== undefined && limit !== null ? limit : last[1] + (fc.forecast.slopePerHour * (fcEnd - last[0])) / HOUR);
+      ext.push(fcHitsLimit && limit !== undefined && limit !== null ? limit : path.length ? last[1] : last[1] + (fc.forecast.slopePerHour * (fcEnd - last[0])) / HOUR);
+      // The expected path sets the scale; the band is drawn within it, never stretches it.
+      for (const [t, mid] of path) if (t <= fcEnd) ext.push(mid);
     }
     for (const s of series) if (s.band) ext.push(s.band.low, s.band.high);
     if (limit !== undefined && limit !== null) {
@@ -259,9 +266,29 @@ export function LineChart({
           if (!s.forecast || !s.points.length) return null;
           const last = s.points[s.points.length - 1]!;
           const end = geo.fcEnd;
+          const color = s.color ?? seriesColor(i);
+          const path = s.forecast.path ?? [];
+          if (path.length) {
+            // The model's forecast: its expected path (dashed) inside its 90% band, from
+            // the last reading; when it reaches the limit, it stops there.
+            const clampY = (v: number) => y(Math.min(geo.hi, Math.max(geo.lo, v)));
+            const rows = path.filter(([t]) => t > last[0] && t <= end);
+            const hit = geo.fcHitsLimit && limit !== undefined && limit !== null;
+            const mid: Array<[number, number]> = [[last[0], last[1]], ...rows.map(([t, m]) => [t, m] as [number, number])];
+            if (hit) mid.push([end, limit!]);
+            const upper = [[last[0], last[1]] as [number, number], ...rows.map(([t, , , h]) => [t, h] as [number, number])];
+            const lower = [[last[0], last[1]] as [number, number], ...rows.map(([t, , l]) => [t, l] as [number, number])];
+            const band = [...upper, ...lower.reverse()].map(([t, v]) => `${x(t)},${clampY(v)}`).join(' ');
+            return (
+              <g key={`f-${s.key}`}>
+                <polygon points={band} fill={color} fillOpacity={0.1} stroke="none" />
+                <polyline points={mid.map(([t, v]) => `${x(t)},${clampY(v)}`).join(' ')} fill="none" stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+              </g>
+            );
+          }
           const v = geo.fcHitsLimit && limit !== undefined && limit !== null ? limit : last[1] + (s.forecast.slopePerHour * (end - last[0])) / 3_600_000;
           return (
-            <line key={`f-${s.key}`} x1={x(last[0])} y1={y(last[1])} x2={x(end)} y2={y(v)} stroke={s.color ?? seriesColor(i)} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
+            <line key={`f-${s.key}`} x1={x(last[0])} y1={y(last[1])} x2={x(end)} y2={y(v)} stroke={color} strokeWidth={1.5} strokeDasharray="5 4" vectorEffect="non-scaling-stroke" />
           );
         })}
         {hoverAt !== undefined && (

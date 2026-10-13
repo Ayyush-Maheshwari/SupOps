@@ -1,5 +1,6 @@
 export * from './anomaly.ts';
 export * from './forecast.ts';
+export * from './predict.ts';
 export * from './correlate.ts';
 export * from './sources.ts';
 export * from './citations.ts';

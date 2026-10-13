@@ -19,6 +19,13 @@ export interface ScanSeries {
   /** Change per second, from the last 6 hours and the last day. */
   deriv6h?: number;
   deriv1d?: number;
+  /**
+   * Signals that rise and fall: the level held throughout the last 15 minutes (the
+   * lowest of them when high is bad, the highest when low is bad) and the 15-minute
+   * mean. One sample is never the level.
+   */
+  sustained?: number;
+  avg15m?: number;
 }
 
 export const MAX_SCAN_SERIES = 2000;
@@ -26,7 +33,13 @@ export const MAX_SCAN_SERIES = 2000;
 export async function scanSignal(
   target: ResolvedTarget,
   query: string,
-  opts: { withTrend: boolean; signal?: AbortSignal; max?: number },
+  opts: {
+    withTrend: boolean;
+    /** A signal that rises and falls, bad in this direction: also read its 15-minute levels. */
+    sustain?: 'up' | 'down';
+    signal?: AbortSignal;
+    max?: number;
+  },
 ): Promise<{ error: string } | { series: ScanSeries[]; truncated: number }> {
   const q = `(${query})`;
   const now = await promInstant(target, query, opts.signal);
@@ -37,21 +50,28 @@ export async function scanSignal(
     const labels = Object.fromEntries(Object.entries(s.metric).filter(([k]) => k !== '__name__'));
     byKey.set(seriesKey(labels), { key: seriesKey(labels), labels, value: s.value });
   }
-  const extra: Array<[keyof ScanSeries, string]> = [
-    ['avg1d', `avg_over_time(${q}[1d:15m])`],
-    ['sd1d', `stddev_over_time(${q}[1d:15m])`],
-    ['yesterday', `${q} offset 1d`],
-    ...(opts.withTrend ? ([['deriv6h', `deriv(${q}[6h:5m])`], ['deriv1d', `deriv(${q}[1d:15m])`]] as Array<[keyof ScanSeries, string]>) : []),
+  type Set = (row: ScanSeries, v: number) => void;
+  const field = (f: 'avg1d' | 'sd1d' | 'yesterday' | 'deriv6h' | 'deriv1d' | 'sustained' | 'avg15m'): Set => (row, v) => { row[f] = v; };
+  const extra: Array<[Set, string]> = [
+    [field('avg1d'), `avg_over_time(${q}[1d:15m])`],
+    [field('sd1d'), `stddev_over_time(${q}[1d:15m])`],
+    [field('yesterday'), `${q} offset 1d`],
   ];
+  if (opts.withTrend) extra.push([field('deriv6h'), `deriv(${q}[6h:5m])`], [field('deriv1d'), `deriv(${q}[1d:15m])`]);
+  if (opts.sustain) {
+    // What held for the whole of the last 15 minutes, as an alert's `for: 15m` sees it.
+    extra.push([field('sustained'), `${opts.sustain === 'up' ? 'min' : 'max'}_over_time(${q}[15m:1m])`]);
+    extra.push([field('avg15m'), `avg_over_time(${q}[15m:1m])`]);
+  }
   // The extras only refine the picture: one that fails leaves its field empty.
   await Promise.all(
-    extra.map(async ([field, expr]) => {
+    extra.map(async ([set, expr]) => {
       const r = await promInstant(target, expr, opts.signal);
       if ('error' in r) return;
       for (const s of r.samples) {
         const labels = Object.fromEntries(Object.entries(s.metric).filter(([k]) => k !== '__name__'));
         const row = byKey.get(seriesKey(labels));
-        if (row) (row as unknown as Record<string, number>)[field] = s.value;
+        if (row && Number.isFinite(s.value)) set(row, s.value);
       }
     }),
   );

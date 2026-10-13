@@ -26,20 +26,27 @@ export interface SignalDef {
   /** Levels that are a problem whatever the history: warn and critical (above, or below for badDirection down). */
   warn?: number;
   crit?: number;
+  /**
+   * 'fluctuates': rises and falls through the day (CPU, memory, load), so it is
+   * forecast from its daily peaks and judged on a sustained value, never on one
+   * sample. Otherwise it accumulates (disk, inodes, certificates) and a recent
+   * trend is the right forecast.
+   */
+  behaviour?: 'fluctuates';
 }
 
 const FS = 'fstype!~"tmpfs|overlay|squashfs|ramfs|devtmpfs|nsfs",mountpoint!~"/boot.*|/run.*|/snap.*"';
 
 export const SIGNALS: SignalDef[] = [
-  { key: 'cpu', title: 'CPU used', group: 'resources', requires: 'node_cpu_seconds_total', unit: 'percent', badDirection: 'up', limit: null, minDelta: 10,
+  { key: 'cpu', title: 'CPU used', group: 'resources', requires: 'node_cpu_seconds_total', unit: 'percent', badDirection: 'up', limit: null, minDelta: 10, behaviour: 'fluctuates',
     query: '100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode="idle"}[5m])))' },
-  { key: 'memory', title: 'Memory used', group: 'resources', requires: 'node_memory_MemAvailable_bytes', unit: 'percent', badDirection: 'up', limit: { value: 100, when: 'above' }, minDelta: 5,
+  { key: 'memory', title: 'Memory used', group: 'resources', requires: 'node_memory_MemAvailable_bytes', unit: 'percent', badDirection: 'up', limit: { value: 100, when: 'above' }, minDelta: 5, behaviour: 'fluctuates',
     query: '100 * (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes)' },
   { key: 'disk_free', title: 'Disk free', group: 'resources', requires: 'node_filesystem_avail_bytes', unit: 'bytes', badDirection: 'down', limit: { value: 0, when: 'below' },
     query: `min by (instance, mountpoint) (node_filesystem_avail_bytes{${FS}})` },
   { key: 'inodes_free', title: 'Inodes free', group: 'resources', requires: 'node_filesystem_files_free', unit: 'count', badDirection: 'down', limit: { value: 0, when: 'below' },
     query: `min by (instance, mountpoint) (node_filesystem_files_free{${FS}})` },
-  { key: 'load', warn: 1, crit: 1.5, title: 'Load per core', group: 'resources', requires: 'node_load5', unit: 'ratio', badDirection: 'up', limit: null, minDelta: 0.3,
+  { key: 'load', warn: 1, crit: 1.5, title: 'Load per core', group: 'resources', requires: 'node_load5', unit: 'ratio', badDirection: 'up', limit: null, minDelta: 0.3, behaviour: 'fluctuates',
     query: 'node_load5 / on (instance) count by (instance) (node_cpu_seconds_total{mode="idle"})' },
   { key: 'net_errors', warn: 1, crit: 10, title: 'Network errors', group: 'resources', requires: 'node_network_receive_errs_total', unit: 'per_second', badDirection: 'up', limit: null, minDelta: 0.1,
     query: 'sum by (instance) (rate(node_network_receive_errs_total[5m]) + rate(node_network_transmit_errs_total[5m]))' },
@@ -66,6 +73,17 @@ export const SIGNALS: SignalDef[] = [
   { key: 'scrape_duration', warn: 10, crit: 30, title: 'Slowest scrape', group: 'stack', requires: 'scrape_duration_seconds', unit: 'seconds', badDirection: 'up', limit: null, minDelta: 1,
     query: 'max by (job) (scrape_duration_seconds)' },
 ];
+
+/**
+ * Does a watch rise and fall rather than accumulate? A built-in signal says so; for
+ * a custom query the unit decides: utilisation, rates and latencies swing with
+ * load, while bytes, counts and days left tend to build up.
+ */
+export function fluctuates(w: { key: string; unit: string }): boolean {
+  const def = SIGNALS.find((s) => s.key === w.key);
+  if (def) return def.behaviour === 'fluctuates';
+  return ['percent', 'ratio', 'per_second', 'seconds'].includes(w.unit);
+}
 
 /** Which signals this backend can serve, one cheap probe each. */
 export async function discoverSignals(target: ResolvedTarget, signal?: AbortSignal): Promise<SignalDef[]> {

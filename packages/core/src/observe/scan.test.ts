@@ -107,3 +107,37 @@ test('several series can be picked out at once, for a combined graph', () => {
   assert.equal(q, '(x) and on(instance, mountpoint) (label_replace(label_replace(vector(1), "instance", "a", "", ""), "mountpoint", "", "", "") or label_replace(label_replace(vector(1), "instance", "b", "", ""), "mountpoint", "/", "", ""))');
   assert.equal(seriesFilterQueryMany('x', [{ instance: 'a' }]), seriesFilterQuery('x', { instance: 'a' }));
 });
+
+test('a signal that rises and falls is over its limit only when that held for 15 minutes', () => {
+  const cpu = { unit: 'percent', badDirection: 'up' as const, limit: { value: 90, when: 'above' as const }, fluctuates: true };
+  // A spike to 98% with 15 minutes mostly at 60%: not over.
+  const spike = assessSeries({ key: 'k', labels: {}, value: 98, sustained: 55, avg15m: 62 }, cpu, []);
+  assert.equal(spike.forecast, null);
+  assert.ok(spike.score < 60, `scored on the 15-minute level (${spike.score})`);
+  // Above 90% for the whole 15 minutes: over.
+  const held = assessSeries({ key: 'k', labels: {}, value: 97, sustained: 92, avg15m: 95 }, cpu, []);
+  assert.equal(held.forecast?.over, true);
+});
+
+test('a daily ramp is never a forecast without the model', () => {
+  const mem = { unit: 'percent', badDirection: 'up' as const, limit: { value: 100, when: 'above' as const }, fluctuates: true };
+  // Morning ramp: +5 points an hour for 6 hours, +1 a day. The old straight line said "full in 6h".
+  const a = assessSeries({ key: 'k', labels: {}, value: 70, sustained: 69, avg15m: 70, deriv6h: 5 / 3600, deriv1d: 1 / 86_400 }, mem, []);
+  assert.equal(a.forecast, null);
+});
+
+test('the model decides for signals it ran on; a disk filling right now still wins', () => {
+  const disk = { unit: 'bytes', badDirection: 'down' as const, limit: { value: 0, when: 'below' as const } };
+  const model = { model: 'linear' as const, etaMs: 5 * 86_400_000, earliestMs: 4 * 86_400_000, perDay: -2e9, level: 10e9, confidence: 'high' as const, path: [], historyHours: 300, shiftAt: null, backtestMae: 1e8, seasonality: 0 };
+  // Calm last hours: the model's 5 days.
+  const calm = assessSeries({ key: 'k', labels: {}, value: 10e9, deriv6h: -0.1e9 / 3600, deriv1d: -0.08e9 / 3600 }, disk, [], { model });
+  assert.equal(calm.forecast?.basis, 'model');
+  assert.equal(calm.forecast?.etaMs, model.etaMs);
+  // Filling fast since this morning, both windows agree: about 10 hours, not 5 days.
+  const fast = assessSeries({ key: 'k', labels: {}, value: 10e9, deriv6h: -1e9 / 3600, deriv1d: -0.9e9 / 3600 }, disk, [], { model });
+  assert.equal(fast.forecast?.basis, 'trend');
+  assert.ok(fast.forecast!.etaMs < 11 * 3_600_000);
+  // The model ran and found nothing, and the last hours are a blip: no forecast.
+  const blip = assessSeries({ key: 'k', labels: {}, value: 10e9, deriv6h: -1e9 / 3600, deriv1d: 0.1e9 / 3600 }, disk, [], { model: null });
+  assert.equal(blip.forecast, null);
+});

@@ -1,8 +1,10 @@
 import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import { incidents, metricPoints, observations, projects, watchSeries, watches } from '@supops/db';
-import type { ResolvedTarget } from '@supops/core';
+import type { Assessment, Prediction, ResolvedTarget, ScanSeries } from '@supops/core';
 import {
   assessSeries,
+  fluctuates,
+  predict,
   isExhaustion,
   discoverSignals,
   formatEta,
@@ -35,6 +37,84 @@ import { reopenIncident } from './incidents.ts';
 const DAY = 86_400_000;
 const HOUR = 3_600_000;
 type WatchRow = typeof watches.$inferSelect;
+
+// ---- the forecast model, hourly, for the series that could be heading somewhere ----
+
+/** How long a fitted model is used before it is fitted again. */
+const MODEL_TTL = HOUR;
+/** At most this many series per watch get the full model. */
+const MAX_MODELLED = 100;
+/** History the model reads (Prometheus keeps 15 days by default). */
+const MODEL_HISTORY_DAYS = 15;
+/** A forecast must hold this long before it opens an incident (an alert's `for:`). */
+const PREDICTION_HOLD = 15 * 60_000;
+
+const modelCache = new Map<string, { at: number; query: string; limit: string; byKey: Map<string, Prediction | null> }>();
+
+/** The model's latest forecast for one series, for the chart. */
+export function cachedPrediction(watchId: string, key: string): Prediction | null {
+  return modelCache.get(watchId)?.byKey.get(key) ?? null;
+}
+
+/**
+ * Which series are worth the full model: those near their limit, those the quick
+ * trend says are heading there within a month, and those with a forecast open.
+ * Everything else is far from trouble and is not modelled at all.
+ */
+function modelCandidates(w: WatchRow, series: ScanSeries[], fl: boolean, open: Set<string>): ScanSeries[] {
+  const limit = w.limit!;
+  const toward = (d: number | undefined) => d !== undefined && (limit.when === 'below' ? d < 0 : d > 0);
+  const closeness = (s: ScanSeries): number => {
+    const v = fl ? (s.avg15m ?? s.value) : s.value;
+    // Headroom left, relative to the limit when it is not zero (e.g. 100%).
+    const rel = limit.value !== 0 ? Math.abs(limit.value - v) / Math.abs(limit.value) : Infinity;
+    const d = toward(s.deriv1d) ? s.deriv1d! : toward(s.deriv6h) ? s.deriv6h! : undefined;
+    const etaDays = d !== undefined ? Math.abs(limit.value - v) / Math.abs(d) / 86_400 : Infinity;
+    // Within 40% of the limit counts as close (scored like 30 days away at 40%).
+    return Math.min(rel * 75, etaDays);
+  };
+  return series
+    .map((s) => ({ s, c: open.has(s.key) ? -1 : closeness(s) }))
+    .filter((x) => x.c <= 30 || x.c < 0)
+    .sort((a, b) => a.c - b.c)
+    .slice(0, MAX_MODELLED)
+    .map((x) => x.s);
+}
+
+/**
+ * Fit the model for the candidates whose fit is missing or older than an hour:
+ * hourly means over the last 15 days, read in chunks of 20 series.
+ */
+async function modelsFor(w: WatchRow, conn: ResolvedTarget, candidates: ScanSeries[], now: number): Promise<Map<string, Prediction | null>> {
+  const limit = w.limit!;
+  const limitKey = JSON.stringify(limit);
+  let cache = modelCache.get(w.id);
+  if (!cache || now - cache.at > MODEL_TTL || cache.query !== w.query || cache.limit !== limitKey) {
+    cache = { at: now, query: w.query, limit: limitKey, byKey: new Map() };
+    modelCache.set(w.id, cache);
+  }
+  const missing = candidates.filter((s) => !cache!.byKey.has(s.key));
+  const minRise = SIGNALS.find((x) => x.key === w.key)?.minDelta ?? 0;
+  for (let i = 0; i < missing.length; i += 20) {
+    const chunk = missing.slice(i, i + 20);
+    const query = `avg_over_time((${seriesFilterQueryMany(w.query, chunk.map((s) => s.labels))})[1h:5m])`;
+    const r = await promRange(conn, query, now - MODEL_HISTORY_DAYS * DAY, now, 3600, { signal: AbortSignal.timeout(60_000), maxSeries: 40 });
+    if ('error' in r) {
+      console.warn(`  ! forecast history for ${w.title}: ${r.error.slice(0, 160)}`);
+      break;
+    }
+    const byKey = new Map(r.series.map((x) => [x.key, x.points]));
+    for (const s of chunk) {
+      const pts = byKey.get(s.key);
+      cache.byKey.set(s.key, pts ? predict(pts, limit, { now, minRise }) : null);
+      // A hundred fits must not hold up the server.
+      await new Promise((res) => setImmediate(res));
+    }
+  }
+  return new Map(candidates.filter((s) => cache!.byKey.has(s.key)).map((s) => [s.key, cache!.byKey.get(s.key)!]));
+}
+
+const MODEL_LABEL: Record<Prediction['model'], string> = { linear: 'steady trend', daily: 'daily pattern', weekly: 'weekly pattern' };
 
 /** Last time built-in signals were discovered per connection. */
 const discoveredAt = new Map<string, number>();
@@ -93,7 +173,10 @@ export function resolveObservation(o: typeof observations.$inferSelect | undefin
  */
 export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.now()): Promise<void> {
   const cfg = settingsStore.observability();
-  const r = await scanSignal(conn, w.query, { withTrend: !!w.limit, signal: AbortSignal.timeout(60_000) });
+  const fl = fluctuates(w);
+  // Rises and falls: read what held for 15 minutes; builds up: read its recent trend.
+  const bad = w.limit ? (w.limit.when === 'above' ? 'up' : 'down') : w.badDirection === 'down' ? 'down' : 'up';
+  const r = await scanSignal(conn, w.query, { withTrend: !!w.limit, ...(fl ? { sustain: bad } : {}), signal: AbortSignal.timeout(60_000) });
   if ('error' in r) {
     db.update(watches).set({ lastRunAt: new Date(now), lastError: r.error.slice(0, 500) }).where(eq(watches.id, w.id)).run();
     return;
@@ -103,8 +186,25 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
   const signal = SIGNALS.find((s) => s.key === w.key);
   // Built-in levels apply only while the built-in query is unchanged.
   const own = signal && w.builtin && w.query === signal.query;
-  const spec = { unit: w.unit, badDirection: w.badDirection, limit: w.limit, minDelta: signal?.minDelta, ...(own ? { warn: signal.warn, crit: signal.crit } : {}) };
-  const peers = r.series.map((s) => s.value);
+  const spec = { unit: w.unit, badDirection: w.badDirection, limit: w.limit, minDelta: signal?.minDelta, fluctuates: fl, ...(own ? { warn: signal.warn, crit: signal.crit } : {}) };
+  const peers = r.series.map((s) => (fl ? (s.avg15m ?? s.value) : s.value));
+
+  // The full forecast model, for the series that could be heading for their limit.
+  let models = new Map<string, Prediction | null>();
+  if (w.limit) {
+    const openF = new Set(
+      db.select({ series: observations.series }).from(observations)
+        .where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'), isNull(observations.resolvedAt))).all().map((o) => o.series),
+    );
+    try {
+      models = await modelsFor(w, conn, modelCandidates(w, r.series, fl, openF), now);
+    } catch (err) {
+      console.warn(`  ! forecast model for ${w.title}: ${err instanceof Error ? err.message : err}`);
+    }
+  }
+  const assessed = new Map<string, Assessment>(
+    r.series.map((s) => [s.key, assessSeries(s, spec, peers, models.has(s.key) ? { model: models.get(s.key)! } : {})]),
+  );
   const prior = new Map(db.select({ series: watchSeries.series, streak: watchSeries.anomalyStreak }).from(watchSeries).where(eq(watchSeries.watchId, w.id)).all().map((x) => [x.series, x.streak]));
   const fmt = (v: number) => formatValue(v, w.unit);
   const horizon = (h: number) => h * HOUR;
@@ -112,7 +212,7 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
   db.transaction((tx) => {
     tx.delete(watchSeries).where(eq(watchSeries.watchId, w.id)).run();
     for (const s of r.series) {
-      const a = assessSeries(s, spec, peers);
+      const a = assessed.get(s.key)!;
       const name = seriesName(s.labels);
       const targetId = scopeAlert({ labels: s.labels, title: '', summary: null, channelName: null }, available).matched[0]?.id ?? null;
       tx.insert(watchSeries)
@@ -131,7 +231,7 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
 
   for (const s of r.series) {
     const row = db.select().from(watchSeries).where(and(eq(watchSeries.watchId, w.id), eq(watchSeries.series, s.key))).get()!;
-    const a = assessSeries(s, spec, peers);
+    const a = assessed.get(s.key)!;
     const name = row.name;
     const targetId = row.targetId;
 
@@ -169,8 +269,14 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
       ? `Certificate for ${name} expires in ${formatEta(f.etaMs)}`
       : f.over
         ? `${w.title} on ${name} is over its limit (${fmt(s.value)}; limit ${fmt(w.limit.value)})${f.worsening ? ' and still rising' : ''}`
-        : `${w.title} on ${name} ${isExhaustion(w.limit, w.unit) ? 'runs out' : 'reaches its limit'} in about ${formatEta(f.etaMs)} (now ${fmt(s.value)}, ${f.slopePerHour >= 0 ? '+' : ''}${fmt(f.slopePerHour)}/h)`;
-    const details = { etaMs: f.etaMs, limit: w.limit, slopePerHour: f.slopePerHour, confidence: deterministic ? 'high' : f.confidence, over: !!f.over, worsening: !!f.worsening, unit: w.unit, value: s.value, name, signal: w.title };
+        : f.basis === 'model' && f.model
+          ? `${w.title} on ${name} ${isExhaustion(w.limit, w.unit) ? 'runs out' : 'reaches its limit'} in about ${formatEta(f.etaMs)} (${MODEL_LABEL[f.model]}${f.slopePerHour ? `, ${f.slopePerHour >= 0 ? '+' : ''}${fmt(f.slopePerHour * 24)}/day` : ''}; now ${fmt(fl ? (s.avg15m ?? s.value) : s.value)})`
+          : `${w.title} on ${name} ${isExhaustion(w.limit, w.unit) ? 'runs out' : 'reaches its limit'} in about ${formatEta(f.etaMs)} (now ${fmt(s.value)}, ${f.slopePerHour >= 0 ? '+' : ''}${fmt(f.slopePerHour)}/h)`;
+    const details = {
+      etaMs: f.etaMs, limit: w.limit, slopePerHour: f.slopePerHour, confidence: deterministic ? 'high' : f.confidence, over: !!f.over, worsening: !!f.worsening,
+      unit: w.unit, value: s.value, name, signal: w.title,
+      ...(f.basis ? { basis: f.basis } : {}), ...(f.model ? { model: f.model } : {}), ...(f.earliestMs !== undefined ? { earliestMs: f.earliestMs } : {}),
+    };
     let obs = openF;
     if (obs) {
       db.update(observations).set({ lastSeenAt: new Date(now), message, severity, value: s.value, details }).where(eq(observations.id, obs.id)).run();
@@ -181,9 +287,11 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
         .returning()
         .get();
     }
-    // Soon enough, and sure enough: open an incident before anything fails -- or, when
-    // an incident is already open about this machine, add the forecast to it.
-    if (severity !== 'info' && !obs.incidentId && targetId) {
+    // Soon enough, sure enough, and for long enough: a forecast must hold for 15
+    // minutes (as an alert's `for:` would) before it opens an incident -- or, when an
+    // incident is already open about this machine, before it joins it.
+    const held = now - obs.startedAt.getTime() >= PREDICTION_HOLD;
+    if (severity !== 'info' && held && !obs.incidentId && targetId) {
       const existing = db
         .select({ id: incidents.id, targetIds: incidents.targetIds })
         .from(incidents)
@@ -195,7 +303,7 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
         obs = { ...obs, incidentId: existing.id };
       }
     }
-    if (severity !== 'info' && !obs.incidentId) {
+    if (severity !== 'info' && held && !obs.incidentId) {
       const inc = db
         .insert(incidents)
         .values({
@@ -213,7 +321,7 @@ export async function sampleWatch(w: WatchRow, conn: ResolvedTarget, now = Date.
       enqueueTriage(inc.id);
     } else if (obs.incidentId) {
       // A forecast that turned critical breaks through an ignore.
-      if (severity === 'critical') {
+      if (severity === 'critical' && held) {
         const linked = db.select({ status: incidents.status, severity: incidents.severity }).from(incidents).where(eq(incidents.id, obs.incidentId)).get();
         if (linked?.status === 'ignored' && linked.severity !== 'critical') {
           reopenIncident(obs.incidentId);

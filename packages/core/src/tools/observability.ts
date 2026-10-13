@@ -4,7 +4,8 @@ import type { ObservabilityAuth, ObservabilityConfig } from '@supops/db';
 import type { ExecContext, ResolvedTarget, ToolDef } from './types.ts';
 import { errOutput, okOutput, truncateOutput } from './output.ts';
 import { safeGet } from './executors/http.ts';
-import { forecastLimit, formatEta, project } from '../observe/forecast.ts';
+import { formatEta } from '../observe/forecast.ts';
+import { predict } from '../observe/predict.ts';
 
 /**
  * Read-only query tools for observability backends: metrics (Prometheus), logs
@@ -172,8 +173,10 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
     'Query a Prometheus-compatible metrics backend (read-only). operation: instant (PromQL at a time), ' +
     'range (PromQL over start..end; result is summarised per series as first/last/min/max), series, labels, ' +
     'label_values (needs label), targets (scrape health), rules, alerts (firing/pending), ' +
-    'forecast (fit the last 24h of a PromQL query and say where each series is heading: with limit_value and limit_when, ' +
-    'when it reaches that limit, e.g. disk free bytes below 0; otherwise its value after horizon, default 24h), ' +
+    'forecast (model up to 15 days of hourly history -- trend plus any daily or weekly pattern, chosen by backtest, with a ' +
+    '90% range -- and say where each series is heading: with limit_value and limit_when, when it reaches that limit and the ' +
+    'earliest it plausibly could, e.g. disk free bytes below 0; otherwise its value after horizon, default 24h. Use it ' +
+    'rather than judging a trend from a few hours of a graph: CPU and memory rise every morning without running out), ' +
     'baseline (each series now vs 1 day and 1 week ago, and how unusual it is against the last day), ' +
     'status (is this Prometheus itself healthy: version, config reload, storage, series count, scrape targets). Times accept ' +
     '"now", "now-1h", RFC3339 or unix seconds. Prefer rate()/increase() over raw counters and aggregate with sum by (...).',
@@ -249,6 +252,7 @@ export const queryMetricsTool: ToolDef<z.infer<typeof metricsArgs>> = {
 // ---- forecast / baseline / status ----------------------------------------------
 
 const HORIZON_MS: Record<string, number> = { m: 60_000, h: 3_600_000, d: 86_400_000 };
+const MODEL_WORDS = { linear: 'steady trend', daily: 'trend with a daily pattern', weekly: 'trend with a weekly pattern' } as const;
 
 async function forecastOp(
   ctx: ExecContext,
@@ -257,7 +261,9 @@ async function forecastOp(
   limit: number,
 ): Promise<string> {
   const end = Date.now();
-  const r = await call(ctx, '/api/v1/query_range', { query, start: (end - 24 * 3.6e6) / 1000, end: end / 1000, step: '300s' });
+  // The same model the watcher uses: hourly means over 15 days, trend + daily/weekly
+  // pattern chosen by backtest, a 90% band (see observe/predict.ts).
+  const r = await call(ctx, '/api/v1/query_range', { query: `avg_over_time((${query})[1h:5m])`, start: (end - 15 * 86_400_000) / 1000, end: end / 1000, step: '3600s' });
   if ('error' in r) return `ERROR: ${r.error}`;
   const rows = ((r.json as { data?: { result?: Array<{ metric: Record<string, string>; values: Array<[number, string]> }> } }).data?.result ?? []);
   if (!rows.length) return '(no series matched)';
@@ -265,19 +271,29 @@ async function forecastOp(
   for (const row of rows.slice(0, limit)) {
     const pts = row.values.map(([t, v]) => ({ at: t * 1000, value: Number(v) })).filter((p) => Number.isFinite(p.value));
     const name = `${row.metric.__name__ ?? ''}${labelsOf(row.metric)}`;
-    if (a.limit_value !== undefined) {
-      const f = forecastLimit(pts, { value: a.limit_value, when: a.limit_when ?? 'below' }, end);
-      if (!f) { out.push(`${name}: not enough history to forecast`); continue; }
+    const limitGiven = a.limit_value !== undefined;
+    const p = predict(pts, limitGiven ? { value: a.limit_value!, when: a.limit_when ?? 'below' } : { value: Number.POSITIVE_INFINITY, when: 'above' }, { now: end });
+    if (!p) { out.push(`${name}: not enough history to forecast (needs at least 12 hours)`); continue; }
+    const how =
+      `${MODEL_WORDS[p.model]}${p.model !== 'linear' ? ` (pattern explains ${Math.round(p.seasonality * 100)}% of the movement)` : ''}, ` +
+      `trend ${p.perDay === 0 ? 'flat (no consistent growth)' : `${p.perDay >= 0 ? '+' : ''}${num(String(p.perDay))}/day`}, ` +
+      `${p.historyHours}h of history${p.shiftAt ? ` since a level shift at ${new Date(p.shiftAt).toISOString().slice(0, 16)}Z` : ''}` +
+      `${p.backtestMae !== null ? `, backtest error ±${num(String(p.backtestMae))}` : ''}`;
+    if (limitGiven) {
       out.push(
-        `${name}: now ${num(String(f.current))}, ${f.slopePerHour >= 0 ? '+' : ''}${num(String(f.slopePerHour))}/h over the last ${f.windowHours}h; ` +
-          (f.etaMs === null ? 'not heading towards the limit' : f.etaMs === 0 ? 'already past the limit' : `reaches ${a.limit_value} in about ${formatEta(f.etaMs)}`) +
-          ` (confidence ${f.confidence}, r2 ${f.r2})`,
+        `${name}: now about ${num(String(p.level))}; ` +
+          (p.etaMs === null
+            ? `not reaching ${a.limit_value} within 14 days${p.earliestMs !== null ? ` (the pessimistic case reaches it in ${formatEta(p.earliestMs)})` : ''}`
+            : p.etaMs === 0
+              ? 'already at the limit'
+              : `reaches ${a.limit_value} in about ${formatEta(p.etaMs)}${p.earliestMs !== null && p.earliestMs < p.etaMs ? ` (earliest ${formatEta(p.earliestMs)})` : ''}`) +
+          `; confidence ${p.confidence}. Model: ${how}`,
       );
     } else {
       const h = a.horizon ?? '24h';
-      const p = project(pts, Number(h.slice(0, -1)) * HORIZON_MS[h.slice(-1)]!, end);
-      if (!p) { out.push(`${name}: not enough history to forecast`); continue; }
-      out.push(`${name}: now ${num(String(pts[pts.length - 1]?.value ?? NaN))}, in ${h} about ${num(String(p.value))} (${p.slopePerHour >= 0 ? '+' : ''}${num(String(p.slopePerHour))}/h, r2 ${p.r2.toFixed(2)})`);
+      const at = end + Math.min(14 * 86_400_000, Number(h.slice(0, -1)) * HORIZON_MS[h.slice(-1)]!);
+      const row = p.path.reduce((best, r) => (Math.abs(r[0] - at) < Math.abs(best[0] - at) ? r : best), p.path[0]!);
+      out.push(`${name}: now about ${num(String(p.level))}, in ${h} about ${num(String(row[1]))} (likely ${num(String(row[2]))} to ${num(String(row[3]))}). Model: ${how}`);
     }
   }
   if (rows.length > limit) out.push(`... ${rows.length - limit} more series`);

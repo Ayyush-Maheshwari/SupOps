@@ -112,6 +112,34 @@ export function forecastLimit(points: Point[], limit: Limit, now = points[points
   };
 }
 
+/**
+ * Theil–Sen line through (x, y): the median of the slopes between every pair of
+ * points, and the median intercept for it. Robust: one unusual point (a busy day,
+ * a restart) barely moves it, where a least-squares line would follow it.
+ */
+export function theilSen(points: Array<[number, number]>): { slope: number; intercept: number; agreement: number } | null {
+  if (points.length < 2) return null;
+  const slopes: number[] = [];
+  for (let i = 0; i < points.length; i++)
+    for (let j = i + 1; j < points.length; j++) {
+      const dx = points[j]![0] - points[i]![0];
+      if (dx !== 0) slopes.push((points[j]![1] - points[i]![1]) / dx);
+    }
+  if (!slopes.length) return null;
+  const median = (v: number[]) => {
+    const a = [...v].sort((x, y) => x - y);
+    const m = a.length >> 1;
+    return a.length % 2 ? a[m]! : (a[m - 1]! + a[m]!) / 2;
+  };
+  const slope = median(slopes);
+  const intercept = median(points.map(([x, y]) => y - slope * x));
+  // How many of the pairwise slopes point the same way as the fit: 1 is a steady
+  // trend, about 0.5 is noise.
+  const agreement = slope === 0 ? 0 : slopes.filter((d) => Math.sign(d) === Math.sign(slope)).length / slopes.length;
+  return { slope, intercept, agreement };
+}
+
+
 /** Where a series is heading `horizonMs` from now, by the 24h linear fit. */
 export function project(points: Point[], horizonMs: number, now = points[points.length - 1]?.at ?? Date.now()): { value: number; slopePerHour: number; r2: number } | null {
   const w = points.filter((p) => p.at >= now - 24 * HOUR && Number.isFinite(p.value));

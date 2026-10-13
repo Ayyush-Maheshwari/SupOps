@@ -179,9 +179,14 @@ test('the watcher scores every series and opens a predicted incident before a di
   assert.match(row.reasons[0]!, /runs out in (19|20)h/);
   assert.equal(row.targetId, web.id, 'tied to the machine by its instance label');
 
-  const f = db.select().from(observations).where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'))).get()!;
+  let f = db.select().from(observations).where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'))).get()!;
   assert.equal(f.severity, 'warning', 'about 20h left: inside the 24h warning horizon');
   assert.match(f.message, /Disk free on web-1:9100 \/var runs out in about (19|20)h/);
+  assert.equal(f.incidentId, null, 'one scan is not enough: a forecast must hold for 15 minutes first');
+
+  // Still predicted 16 minutes later: now it opens an incident.
+  await sampleWatch(db.select().from(watches).where(eq(watches.id, w.id)).get()!, conn, Date.now() + 16 * 60_000);
+  f = db.select().from(observations).where(eq(observations.id, f.id)).get()!;
   const inc = db.select().from(incidents).where(eq(incidents.id, f.incidentId!)).get()!;
   assert.equal(inc.origin, 'prediction');
   assert.equal(inc.status, 'open');
@@ -271,9 +276,11 @@ test('editing a signal re-evaluates what it found', async () => {
     projectId, connectionId: prom.id, key: 'custom:disk', title: 'Disk free', query: 'node_filesystem_avail_bytes', unit: 'bytes',
     builtin: false, badDirection: 'down', limit: { value: 0, when: 'below' }, group: 'custom',
   }).returning().get();
-  await sampleWatch(w, projectConnections(projectId).find((c) => c.id === prom.id)!);
+  const conn = projectConnections(projectId).find((c) => c.id === prom.id)!;
+  await sampleWatch(w, conn);
+  await sampleWatch(w, conn, Date.now() + 16 * 60_000);
   const f = db.select().from(observations).where(and(eq(observations.watchId, w.id), eq(observations.kind, 'forecast'))).get()!;
-  assert.ok(f.incidentId, 'a predicted incident was raised');
+  assert.ok(f.incidentId, 'a predicted incident was raised once the forecast held');
 
   // A higher limit: it runs out sooner, and the incident follows.
   db.update(watches).set({ limit: { value: 16e9, when: 'below' } }).where(eq(watches.id, w.id)).run();

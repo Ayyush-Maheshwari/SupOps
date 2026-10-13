@@ -42,6 +42,8 @@ const Square = ({ color, className }: { color?: string; className?: string }) =>
 );
 const NEEDS_LOOK = 60;
 
+
+const FORECAST_MODEL = { linear: 'steady trend', daily: 'daily pattern', weekly: 'weekly pattern' } as const;
 export function SignalsView({
   projectId,
   connections,
@@ -548,7 +550,12 @@ function SingleChart({ watch: w, item, hours, color }: { watch: Watch; item: Wat
       <div className="mt-3 flex flex-wrap items-center gap-x-4 gap-y-2">
         <div className="flex flex-1 flex-wrap gap-x-4 gap-y-1 text-[10.5px] text-dim">
           {d?.band && <span className="inline-flex items-center gap-1.5"><span className="h-2.5 w-4 rounded-sm bg-blue/15" /> Usual range (last day)</span>}
-          {d?.forecast && <span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-blue" /> Where it is heading</span>}
+          {d?.forecast && (
+            <span className="inline-flex items-center gap-1.5" title={d.forecast.path ? 'Forecast from up to 15 days of history: trend plus its daily or weekly pattern, chosen by how well it predicted the last day. The shaded band is where it lands 9 times in 10.' : undefined}>
+              <span className="w-4 border-t border-dashed border-blue" /> Where it is heading
+              {d.forecast.model && <span className="text-dim">({FORECAST_MODEL[d.forecast.model]}{d.forecast.path ? ', shaded: likely range' : ''})</span>}
+            </span>
+          )}
           {d?.limit && <span className="inline-flex items-center gap-1.5"><span className="w-4 border-t border-dashed border-red/70" /> Runs out at {formatValue(d.limit.value, w.unit)}</span>}
         </div>
         <button className="btn-ghost !min-h-[32px] !px-3 text-xs" disabled={investigate.isPending} onClick={() => investigate.mutate()} title="Finds out why and proposes the fix. Every change waits for your approval.">

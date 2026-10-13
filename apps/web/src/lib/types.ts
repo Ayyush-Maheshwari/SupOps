@@ -474,7 +474,14 @@ export interface SeriesChartData {
   unit: string;
   limit: { value: number; when: 'below' | 'above' } | null;
   band: { low: number; high: number } | null;
-  forecast: { slopePerHour: number; etaMs: number } | null;
+  /** `path`: the model's forecast, hourly: [time, expected, low, high] (a 90% band). */
+  forecast: {
+    slopePerHour: number;
+    etaMs: number | null;
+    path?: Array<[number, number, number, number]>;
+    model?: 'linear' | 'daily' | 'weekly';
+    confidence?: 'high' | 'medium' | 'low';
+  } | null;
 }
 
 export interface AtRiskItem {

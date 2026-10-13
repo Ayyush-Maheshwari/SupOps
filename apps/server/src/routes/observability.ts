@@ -13,7 +13,7 @@ import { pollConnection, pollStatus } from '../observe/alert-poller.ts';
 import { mergeIncidents, reopenIncident, splitIncident } from '../observe/incidents.ts';
 import { incidentMapView } from '../servicemap/context.ts';
 import { enqueueTriage, gatherEvidence, latestFixRun, startIncidentRun } from '../observe/triage.ts';
-import { combinedChart, discover, reevaluateWatch, resolveWatchObservations, seriesChart, watchConnection, watcher, watchSeriesList } from '../observe/watcher.ts';
+import { cachedPrediction, combinedChart, discover, reevaluateWatch, resolveWatchObservations, seriesChart, watchConnection, watcher, watchSeriesList } from '../observe/watcher.ts';
 
 /**
  * Observability: incidents (grouped alerts and predictions), their evidence and
@@ -337,6 +337,21 @@ observabilityRoutes.get('/at-risk', (req, res) => {
   res.json(rows);
 });
 
+/**
+ * The forecast to draw: the model's own path (its daily pattern carried forward, with
+ * the 90% band) when it ran on this series, else the straight trend to the limit.
+ */
+function chartForecast(watchId: string, key: string, row: { etaMs: number | null; slopePerHour: number | null } | undefined) {
+  const eta = row?.etaMs != null && row.etaMs <= 7 * 86_400_000 ? row.etaMs : null;
+  const m = cachedPrediction(watchId, key);
+  if (m && (m.perDay !== 0 || m.seasonality >= 0.3 || eta !== null)) {
+    // A week ahead at most, every hour.
+    const path = m.path.filter(([t]) => t <= Date.now() + 7 * 86_400_000).map(([t, mid, lo, hi]) => [t, mid, lo, hi].map((v) => Number(v.toPrecision(6))) as [number, number, number, number]);
+    return { slopePerHour: m.perDay / 24, etaMs: eta, path, model: m.model, confidence: m.confidence };
+  }
+  return eta !== null && row?.slopePerHour != null ? { slopePerHour: row.slopePerHour, etaMs: eta } : null;
+}
+
 /** One series over a window, read live from the backend, with its usual range and trend. */
 observabilityRoutes.get('/watches/:id/chart', async (req, res) => {
   const w = db.select().from(watches).where(eq(watches.id, req.params.id)).get();
@@ -360,7 +375,7 @@ observabilityRoutes.get('/watches/:id/chart', async (req, res) => {
     band: row?.avg1d != null && row.sd1d != null
       ? { low: row.value >= 0 && row.avg1d >= 0 ? Math.max(0, row.avg1d - 3 * row.sd1d) : row.avg1d - 3 * row.sd1d, high: row.avg1d + 3 * row.sd1d }
       : null,
-    forecast: row?.etaMs != null && row.etaMs <= 7 * 86_400_000 && row.slopePerHour != null ? { slopePerHour: row.slopePerHour, etaMs: row.etaMs } : null,
+    forecast: chartForecast(w.id, key, row),
   });
 });
 
