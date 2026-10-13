@@ -15,13 +15,24 @@ import {
   runs,
   toolCalls,
   users,
+  trustedCommands,
 } from '@supops/db';
 import {
+  CLIENT_REPORT_PROMPT,
+  RUNBOOK_FROM_CALL_PROMPT,
+  buildCallTranscript,
+  buildClientPdfDefinition,
+  callScreenshots,
+  reportScreenshots,
+  buildClientReportMarkdown,
+  parseClientReport,
+  parseRunbookDraft,
   REPORT_DOC_PROMPT,
   buildRcaPdfDefinition,
   canDecide,
   mergePolicy,
   globalRolesMeeting,
+  matchesRule,
   rateSuggestedCommand,
   requiredRole,
   buildReportMarkdown,
@@ -31,8 +42,8 @@ import {
   reportFilename,
 } from '@supops/core';
 import type { ReportVisuals } from '@supops/core';
-import { diagramKey, repairMermaid } from '@supops/shared';
-import type { RiskTier } from '@supops/shared';
+import { ATTACHMENT_URL_PREFIX, diagramKey, repairMermaid } from '@supops/shared';
+import type { ChatMessage, RiskTier } from '@supops/shared';
 import { db, engine, llm } from '../context.ts';
 import { worker } from '../worker.ts';
 import { startRun } from '../services/start-run.ts';
@@ -174,6 +185,8 @@ const startBody = z.object({
   advisory: z.boolean().optional(),
   /** Advisory runs: allow read-only network checks from the SupOps server (default true). */
   networkChecks: z.boolean().optional(),
+  /** A live call with a client: advisory, conversational, kept open between turns. */
+  call: z.boolean().optional(),
 });
 
 runRoutes.post('/', (req, res) => {
@@ -182,7 +195,7 @@ runRoutes.post('/', (req, res) => {
     res.status(400).json({ error: parsed.error.issues[0]?.message ?? 'Invalid run' });
     return;
   }
-  const { projectId, agentId, task, targetIds, interactive, images, runbookId, advisory, networkChecks } = parsed.data;
+  const { projectId, agentId, task, targetIds, interactive, images, runbookId, advisory, networkChecks, call } = parsed.data;
   const decoded = decodeImages(images);
   if (!decoded.ok) {
     res.status(400).json({ error: decoded.error });
@@ -200,7 +213,8 @@ runRoutes.post('/', (req, res) => {
     images: decoded.decoded,
     runbookId: runbookId ?? null,
     advisory: advisory ?? false,
-    networkChecks: networkChecks ?? true,
+    networkChecks: call ? networkChecks === true : networkChecks ?? true,
+    ...(call ? { call: true, interactive: true } : {}),
   });
   if (!result.ok) {
     res.status(result.code).json({ error: result.error });
@@ -209,7 +223,7 @@ runRoutes.post('/', (req, res) => {
   res.status(201).json(result.run);
 });
 
-const rateBody = z.object({ commands: z.array(z.string().max(2000)).max(100) });
+const rateBody = z.object({ commands: z.array(z.string().max(2000)).max(100), projectId: z.string().optional() });
 
 /**
  * Rate the commands an advisory run suggested, so the person about to run them by
@@ -221,7 +235,16 @@ runRoutes.post('/rate-commands', (req, res) => {
     res.status(400).json({ error: 'commands must be a list of up to 100 lines' });
     return;
   }
-  res.json(parsed.data.commands.map((c) => rateSuggestedCommand(c)));
+  // A command the project trusts is marked as such (in any of its environments): the
+  // engineer reads that a person on the team already approved exactly this.
+  const rules = parsed.data.projectId
+    ? db.select().from(trustedCommands).where(and(eq(trustedCommands.projectId, parsed.data.projectId), eq(trustedCommands.status, 'active'))).all()
+    : [];
+  res.json(parsed.data.commands.map((c) => {
+    const rating = rateSuggestedCommand(c);
+    const trusted = rating.tier !== 'forbidden' && rules.some((r) => r.envs.some((env) => matchesRule(r, 'ssh_exec', c, env)));
+    return trusted ? { ...rating, trusted: true } : rating;
+  }));
 });
 
 /** Everything the run detail view needs, in one round trip. */
@@ -345,6 +368,34 @@ runRoutes.post('/:id/cancel', (req, res) => {
     return;
   }
   engine.cancel(run.id);
+  res.json({ ok: true });
+});
+
+/**
+ * End a live call (or any interactive session) that is waiting for its next message:
+ * it becomes a finished run, ready for its report. While the model is still answering
+ * the person is asked to wait for that reply rather than losing it.
+ */
+runRoutes.post('/:id/finish', (req, res) => {
+  const run = db.select().from(runs).where(eq(runs.id, req.params.id)).get();
+  if (!run) {
+    res.status(404).json({ error: 'Run not found' });
+    return;
+  }
+  if (!run.interactive) {
+    res.status(409).json({ error: 'Only a conversation can be ended this way.' });
+    return;
+  }
+  if (run.statusReason === 'ended by the operator') {
+    res.json({ ok: true });
+    return;
+  }
+  // A session's turn ends as `succeeded` (a new message revives it), or parks at `awaiting_input`.
+  if (run.status !== 'succeeded' && run.status !== 'awaiting_input') {
+    res.status(409).json({ error: 'SupOps is still answering; end the call once its reply arrives.' });
+    return;
+  }
+  db.update(runs).set({ status: 'succeeded', statusReason: 'ended by the operator', endedAt: new Date() }).where(eq(runs.id, run.id)).run();
   res.json({ ok: true });
 });
 
@@ -631,6 +682,12 @@ const reportHandler = async (req: Request<{ id: string }>, res: Response): Promi
     .orderBy(asc(toolCalls.createdAt))
     .all();
 
+  // A call's report for the client: plain language, no internal parts (see client-report.ts).
+  if (req.query.audience === 'client') {
+    await clientReport(req, res, run, project?.name ?? 'Unknown project', steps);
+    return;
+  }
+
   // Resolve approver ids to names so the document reads as a record of who decided
   // what, rather than a list of opaque identifiers.
   const approverIds = [...new Set(calls.map((c) => c.decidedBy).filter((x): x is string => !!x))];
@@ -720,6 +777,92 @@ const reportHandler = async (req: Request<{ id: string }>, res: Response): Promi
   }
   res.json({ filename: base, markdown, title: doc.title, type: doc.type, outcome: doc.outcome });
 };
+/** The client-facing report of a call (or any advisory run): Markdown, JSON or PDF. */
+async function clientReport(req: Request<{ id: string }>, res: Response, run: typeof runs.$inferSelect, projectName: string, steps: Array<{ messageJson: ChatMessage }>): Promise<void> {
+  const engineer = run.startedBy ? db.select({ name: users.name, email: users.email }).from(users).where(eq(users.id, run.startedBy)).get() : undefined;
+  const meta = { projectName, engineer: engineer ? engineer.name || engineer.email : null, startedAt: run.startedAt, endedAt: run.endedAt };
+  const transcript = buildCallTranscript(steps);
+  let raw: string | null = null;
+  try {
+    const result = await llm.complete(
+      [
+        { role: 'system', content: CLIENT_REPORT_PROMPT },
+        { role: 'user', content: `Client: ${projectName}\n\nCall transcript:\n\n${transcript}` },
+      ],
+      [],
+      { maxTokens: 2500, temperature: 0.2 },
+    );
+    raw = typeof result.message.content === 'string' ? result.message.content : null;
+  } catch (err) {
+    console.warn('client report: model unavailable:', err instanceof Error ? err.message : err);
+  }
+  const doc = parseClientReport(raw, run.title.replace(/^Call · [^·]+ · /, '').slice(0, 120) || 'Support call');
+  // Sent to a client: no vendor prefix in the file name.
+  const base = reportFilename({ title: doc.title, startedAt: run.startedAt }).replace(/^supops-/, '').replace(/\.md$/, '-report.md');
+  if (req.query.format === 'pdf') {
+    // Only the few screenshots chosen for the client, never every capture of the call.
+    const shots = callScreenshots(steps);
+    const chosen = reportScreenshots(doc, shots.length);
+    const ids = chosen.map((c) => shots[c.n - 1]!).filter((u) => u.startsWith(ATTACHMENT_URL_PREFIX)).map((u) => u.slice(ATTACHMENT_URL_PREFIX.length));
+    const rows = new Map(
+      (ids.length ? db.select().from(runAttachments).where(and(eq(runAttachments.runId, run.id), inArray(runAttachments.id, ids))).all() : []).map((a) => [
+        a.id,
+        `data:${a.mime};base64,${Buffer.from(a.data).toString('base64')}`,
+      ]),
+    );
+    const images = chosen.flatMap((c) => {
+      const url = shots[c.n - 1]!;
+      const dataUrl = url.startsWith(ATTACHMENT_URL_PREFIX) ? rows.get(url.slice(ATTACHMENT_URL_PREFIX.length)) : /^data:image\//.test(url) ? url : undefined;
+      return dataUrl ? [{ dataUrl, n: c.n, caption: c.caption }] : [];
+    });
+    const pdf = await renderPdf(buildClientPdfDefinition(doc, meta, images, shots.length));
+    res.setHeader('Content-Type', 'application/pdf');
+    res.setHeader('Content-Length', String(pdf.length));
+    res.setHeader('Content-Disposition', `attachment; filename="${base.replace(/\.md$/, '.pdf')}"`);
+    res.end(pdf);
+    return;
+  }
+  const markdown = buildClientReportMarkdown(doc, meta);
+  if (req.query.download === '1') {
+    res.setHeader('Content-Type', 'text/markdown; charset=utf-8');
+    res.setHeader('Content-Disposition', `attachment; filename="${base}"`);
+    res.send(markdown);
+    return;
+  }
+  res.json({ filename: base, markdown, title: doc.title, status: doc.status });
+}
+
+/**
+ * A runbook drafted from a call, for the person to review and save to Knowledge.
+ * Nothing is saved here: the draft goes through the normal document flow (an admin's
+ * save is approved, anyone else's is a draft).
+ */
+runRoutes.post('/:id/runbook', async (req, res) => {
+  const run = db.select().from(runs).where(eq(runs.id, req.params.id)).get();
+  if (!run) {
+    res.status(404).json({ error: 'Run not found' });
+    return;
+  }
+  const steps = db.select().from(runSteps).where(and(eq(runSteps.runId, run.id), eq(runSteps.state, 'committed'))).orderBy(asc(runSteps.seq)).all();
+  const transcript = buildCallTranscript(steps);
+  let raw: string | null = null;
+  try {
+    const result = await llm.complete(
+      [
+        { role: 'system', content: RUNBOOK_FROM_CALL_PROMPT },
+        { role: 'user', content: `Call transcript:\n\n${transcript}` },
+      ],
+      [],
+      { maxTokens: 3000, temperature: 0.2 },
+    );
+    raw = typeof result.message.content === 'string' ? result.message.content : null;
+  } catch (err) {
+    res.status(502).json({ error: `The model could not draft the runbook: ${err instanceof Error ? err.message : String(err)}` });
+    return;
+  }
+  res.json(parseRunbookDraft(raw, run.title.replace(/^Call · [^·]+ · /, '').slice(0, 120), transcript));
+});
+
 runRoutes.get('/:id/report', reportHandler);
 runRoutes.post('/:id/report', reportHandler);
 

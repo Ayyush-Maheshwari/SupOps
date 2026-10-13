@@ -12,3 +12,4 @@ export * from './audit.ts';
 export * from './learning.ts';
 export * from './knowledge.ts';
 export * from './servicemap.ts';
+export * from './trust.ts';

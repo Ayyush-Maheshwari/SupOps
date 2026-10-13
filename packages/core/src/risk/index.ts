@@ -12,6 +12,7 @@ export * from './paths.ts';
 export * from './approval.ts';
 export * from './policy.ts';
 export * from './advisory.ts';
+export * from './trust.ts';
 
 export interface AssessInput {
   def: ToolDef<never>;

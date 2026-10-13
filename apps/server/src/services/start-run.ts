@@ -57,6 +57,11 @@ export interface StartRunInput {
   networkChecks?: boolean;
   /** An incident investigation: its alerts and evidence pack go in the opening message. */
   incident?: { evidence: string; mode?: 'diagnose' | 'fix' };
+  /**
+   * A live call with a client who gives no access: always advisory, conversational
+   * (see CALL_PROMPT), network checks off unless asked for.
+   */
+  call?: boolean;
 }
 
 export type StartRunResult =
@@ -106,7 +111,8 @@ export function startRun(input: StartRunInput): StartRunResult {
   // Observability connections are read-only APIs, not access to a host: a project with
   // only those is still advisory, and an advisory run keeps them.
   const observability = available.filter((t) => isObservabilityKind(t.kind));
-  const advisory = !!input.advisory || available.length === observability.length;
+  const call = !!input.call;
+  const advisory = call || !!input.advisory || available.length === observability.length;
   if (advisory) targets = observability;
 
   // Cluster targets are just another way to reach infrastructure: an agent allowed to
@@ -115,7 +121,8 @@ export function startRun(input: StartRunInput): StartRunResult {
   const resolved = registry
     .resolve(effectiveToolKeys(agent.toolKeys ?? null))
     .filter((d) => !KNOWLEDGE_TOOL_KEYS.includes(d.key) && !(input.unattended && d.key === 'confirm_target'));
-  const networkChecks = advisory && input.networkChecks !== false;
+  // A call is about the client's systems, not ours: checks from the SupOps server only when asked for.
+  const networkChecks = advisory && (call ? input.networkChecks === true : input.networkChecks !== false);
   // Every run whose project has approved knowledge can search and read it, whatever the
   // agent's own tool list: the agent chooses which documents fit, instead of relying on
   // the few that were matched into the opening message.
@@ -144,6 +151,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     networkChecks,
     observability: advisory && targets.length > 0,
     incident: input.incident ? (input.incident.mode ?? 'diagnose') : false,
+    call,
   });
 
   // The project's policy combined with this agent's override (which may raise the
@@ -154,6 +162,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     ...(input.unattended ? { unattended: true } : {}),
     ...(advisory ? { advisory: true } : {}),
     ...(networkChecks ? { networkChecks: true } : {}),
+    ...(call ? { call: true } : {}),
   };
 
   // Everything the agent's world consists of is frozen here. A later edit to the
@@ -166,8 +175,8 @@ export function startRun(input: StartRunInput): StartRunResult {
       agentId,
       trigger: input.trigger ?? 'chat',
       interactive: interactive ?? false,
-      triggerPayload: input.triggerPayload ?? { task },
-      title: task.slice(0, 120),
+      triggerPayload: input.triggerPayload ?? (call ? { task, mode: 'call' } : { task }),
+      title: (call ? `Call · ${project.name} · ${task}` : task).slice(0, 120),
       status: 'queued',
       // Resolve through the settings store, not the environment: a provider chosen in
       // the UI must apply to new runs, otherwise the setting appears to save and then
@@ -207,6 +216,7 @@ export function startRun(input: StartRunInput): StartRunResult {
     knowledge: knowledge.block,
     advisory,
     networkChecks,
+    call,
     evidence: input.incident?.evidence,
     observations: observationContext(projectId, targets.map((t) => t.id)) ?? undefined,
     serviceMap: serviceMapContext(projectId, targetIds?.length ? targets.map((t) => t.id) : []) ?? undefined,

@@ -127,7 +127,7 @@ export interface Run {
   /** Present on the list endpoint: who approved/rejected this run's gated steps. */
   approvals?: RunApprovals;
   /** The policy frozen at start; `advisory` marks a run with no system access. */
-  policySnapshot?: { advisory?: boolean; unattended?: boolean; networkChecks?: boolean };
+  policySnapshot?: { advisory?: boolean; unattended?: boolean; networkChecks?: boolean; call?: boolean };
 }
 
 export interface ToolCall {
@@ -181,6 +181,8 @@ export interface AdminUser {
 export interface RunStep {
   id: string;
   seq: number;
+  /** The model that wrote this reply (the fallback when the main one failed); null on older steps. */
+  model?: string | null;
   messageJson: {
     role: 'system' | 'user' | 'assistant' | 'tool';
     /** A user turn with screenshots is multimodal parts; everything else is text. */
@@ -485,4 +487,30 @@ export interface AtRiskItem {
   title: string;
   unit: string;
   group: Watch['group'];
+}
+
+/** A command an admin trusted in a project: a standing approval (see Approvals → Trusted). */
+export interface TrustedCommand {
+  id: string;
+  projectId: string;
+  toolKey: 'ssh_exec' | 'k8s_kubectl';
+  matchKind: 'exact' | 'folder';
+  canonical: string;
+  program: string | null;
+  flags: string[] | null;
+  folder: string | null;
+  glob: string | null;
+  envs: Array<'dev' | 'staging' | 'prod'>;
+  status: 'active' | 'suggested' | 'revoked';
+  note: string | null;
+  sourceToolCallId: string | null;
+  description: string;
+  createdAt: string;
+  createdByName: string | null;
+  approvedAt: string | null;
+  approvedByName: string | null;
+  revokedAt: string | null;
+  revokedByName: string | null;
+  hits: number;
+  lastUsedAt: string | null;
 }

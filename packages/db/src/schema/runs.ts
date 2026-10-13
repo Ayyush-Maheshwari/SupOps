@@ -112,6 +112,11 @@ export const runSteps = sqliteTable(
     completionTokens: integer('completion_tokens'),
     latencyMs: integer('latency_ms'),
     /**
+     * The model that wrote this reply. Usually the run's model; the fallback model when
+     * the main one failed. Null for steps that are not model replies.
+     */
+    model: text('model'),
+    /**
      * Null for ordinary steps. 'engine' marks a message SupOps itself wrote into the
      * conversation (e.g. "continue where you stopped"): sent to the model like any
      * user message, but it is not the operator speaking, so it never starts a turn.

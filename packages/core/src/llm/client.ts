@@ -7,8 +7,14 @@ export interface LLMConfig {
   baseUrl: string;
   apiKey: string;
   model: string;
-  /** Cheap/fast model for the risk classifier's fallback path only. */
+  /** Stored for older installs; nothing reads it (the risk classifier is rule-based). */
   classifierModel?: string;
+  /**
+   * Tried once, on the same provider, when the main model fails with an error another
+   * model could get past: overloaded or down (5xx), rate limited (429), unknown model
+   * (404) or a request this model rejects (400). Empty means no fallback.
+   */
+  fallbackModel?: string;
   maxRetries?: number;
 }
 
@@ -18,7 +24,16 @@ export interface CompletionResult {
   promptTokens: number;
   completionTokens: number;
   latencyMs: number;
+  /** The model that answered. */
+  model: string;
+  /** Set when the main model failed and the fallback answered instead: the main model's error. */
+  fellBackFrom?: { model: string; error: string };
 }
+
+/** Errors a different model may get past. Bad keys (401/403) and network failures are not among them. */
+const FALLBACK_STATUS = new Set([400, 404, 429, 500, 502, 503, 504]);
+/** Errors a model can return for a sampling parameter it no longer accepts. */
+const SAMPLING_REJECT_STATUS = new Set([400, 500]);
 
 const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504]);
 const DEFAULT_BACKOFF_MS = 2_000;
@@ -40,6 +55,12 @@ const MAX_BACKOFF_MS = 60_000;
 export class LLMClient {
   private client: OpenAI;
   private current: LLMConfig;
+  /**
+   * Models that rejected `temperature` (Gemini 3.8 deprecates the sampling parameters,
+   * and a newer model may refuse them outright). Learned once per process: those
+   * models are called without it from then on.
+   */
+  private noSampling = new Set<string>();
 
   constructor(config: LLMConfig) {
     this.current = config;
@@ -81,25 +102,70 @@ export class LLMClient {
   async complete(
     messages: ChatMessage[],
     tools: ToolSpec[],
-    opts: { model?: string; maxTokens?: number; temperature?: number } = {},
+    /** `noFallback`: this exact model or nothing (the connection test checks each model on its own). */
+    opts: { model?: string; maxTokens?: number; temperature?: number; noFallback?: boolean } = {},
   ): Promise<CompletionResult> {
     // Cheap insurance against the single most damaging class of bug in this engine:
     // a suspend/resume path that produced a history the provider will reject, or
     // worse, quietly accept and degrade on.
     assertConversationValid(messages);
 
-    const started = Date.now();
-    let raw;
+    const config = this.config;
+    const client = this.client;
+    const primary = opts.model ?? config.model;
     try {
-      raw = await this.client.chat.completions.create({
-        model: opts.model ?? this.config.model,
+      return await this.attempt(client, primary, messages, tools, opts);
+    } catch (err) {
+      // Runs always name their model (the one they started with), so naming one does not opt out.
+      const fallback = config.fallbackModel?.trim();
+      const status = (err as { status?: number }).status;
+      if (opts.noFallback || !fallback || fallback === primary || status === undefined || !FALLBACK_STATUS.has(status)) throw err;
+      const reason = err instanceof Error ? err.message : String(err);
+      try {
+        const result = await this.attempt(client, fallback, messages, tools, opts);
+        console.warn(`  ! ${primary} failed (${reason.slice(0, 160)}); answered by the fallback model ${fallback}`);
+        return { ...result, fellBackFrom: { model: primary, error: reason } };
+      } catch (fallbackErr) {
+        console.warn(`  ! fallback model ${fallback} also failed: ${fallbackErr instanceof Error ? fallbackErr.message.slice(0, 160) : fallbackErr}`);
+        // The main model's error is the one to act on (its retry advice, its message).
+        throw err;
+      }
+    }
+  }
+
+  /** One request to one model; retried once without `temperature` if the model refuses it. */
+  private async attempt(
+    client: OpenAI,
+    model: string,
+    messages: ChatMessage[],
+    tools: ToolSpec[],
+    opts: { maxTokens?: number; temperature?: number },
+  ): Promise<CompletionResult> {
+    const started = Date.now();
+    const request = (withSampling: boolean) =>
+      client.chat.completions.create({
+        model,
         messages: messages as OpenAI.ChatCompletionMessageParam[],
         ...(tools.length ? { tools: tools as unknown as OpenAI.ChatCompletionTool[] } : {}),
         max_tokens: opts.maxTokens ?? 4096,
-        temperature: opts.temperature ?? 0,
+        ...(withSampling ? { temperature: opts.temperature ?? 0 } : {}),
       });
+
+    let raw;
+    const withSampling = !this.noSampling.has(model);
+    try {
+      raw = await request(withSampling);
     } catch (err) {
-      throw normaliseError(err);
+      const status = err instanceof OpenAI.APIError ? err.status : undefined;
+      if (!withSampling || status === undefined || !SAMPLING_REJECT_STATUS.has(status)) throw normaliseError(err);
+      try {
+        raw = await request(false);
+      } catch {
+        // Not the sampling parameter: report the original failure.
+        throw normaliseError(err);
+      }
+      this.noSampling.add(model);
+      console.warn(`  ! ${model} rejected the temperature parameter (${status}); calling it without one from now on`);
     }
 
     const choice = raw.choices[0];
@@ -111,19 +177,27 @@ export class LLMClient {
       promptTokens: raw.usage?.prompt_tokens ?? 0,
       completionTokens: raw.usage?.completion_tokens ?? 0,
       latencyMs: Date.now() - started,
+      model,
     };
   }
 
-  /** Liveness + credential check for the settings screen. */
-  async ping(): Promise<{ ok: boolean; detail: string }> {
-    try {
-      const res = await this.complete([{ role: 'user', content: 'Reply with: ok' }], [], {
-        maxTokens: 16,
-      });
-      return { ok: true, detail: (res.message.content ?? '').trim().slice(0, 80) || 'ok' };
-    } catch (err) {
-      return { ok: false, detail: err instanceof Error ? err.message : String(err) };
-    }
+  /**
+   * Liveness + credential check for the settings screen. Checks the main model on its
+   * own (a working fallback must not hide a broken main model), then the fallback.
+   */
+  async ping(): Promise<{ ok: boolean; detail: string; fallback?: { model: string; ok: boolean; detail: string } }> {
+    const one = async (model: string) => {
+      try {
+        const res = await this.complete([{ role: 'user', content: 'Reply with: ok' }], [], { model, maxTokens: 16, noFallback: true });
+        return { ok: true, detail: (res.message.content ?? '').trim().slice(0, 80) || 'ok' };
+      } catch (err) {
+        return { ok: false, detail: err instanceof Error ? err.message : String(err) };
+      }
+    };
+    const main = await one(this.config.model);
+    const fb = this.config.fallbackModel?.trim();
+    if (!fb || fb === this.config.model) return main;
+    return { ...main, fallback: { model: fb, ...(await one(fb)) } };
   }
 }
 

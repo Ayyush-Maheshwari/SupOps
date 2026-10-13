@@ -22,12 +22,14 @@ interface Report {
  * than linked directly, because the API needs an Authorization header that a plain
  * anchor cannot carry.
  */
-export function ReportActions({ runId }: { runId: string }) {
+export function ReportActions({ runId, audience }: { runId: string; audience?: 'client' }) {
+  /** `client`: the plain report for the client of a call, without the internal parts. */
+  const q = audience === 'client' ? 'audience=client' : '';
   const [busy, setBusy] = useState<'copy' | 'pdf' | 'md' | null>(null);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  const fetchReport = () => api<Report>(`/runs/${runId}/report`);
+  const fetchReport = () => api<Report>(`/runs/${runId}/report${q ? `?${q}` : ''}`);
 
   async function copy() {
     setBusy('copy');
@@ -120,7 +122,7 @@ export function ReportActions({ runId }: { runId: string }) {
     setError(null);
     try {
       const diagrams = await renderDiagrams().catch(() => []);
-      const res = await fetch(`/api/runs/${runId}/report?format=pdf`, {
+      const res = await fetch(`/api/runs/${runId}/report?format=pdf${q ? `&${q}` : ''}`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${getToken() ?? ''}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ diagrams }),

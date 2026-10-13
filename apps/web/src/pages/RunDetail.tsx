@@ -2,16 +2,17 @@ import { useEffect, useRef, useState } from 'react';
 import { Link, useParams } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { THREAT_LABEL, messageText } from '@supops/shared';
+import { THREAT_LABEL, messageText, stripAnsi } from '@supops/shared';
 import {
   AlertTriangle, ArrowLeft, Ban, BookOpen, Bot, Check, ChevronDown, ChevronRight, CircleSlash, Pin, PinOff,
-  Info, Radio, Server, ShieldAlert, Terminal, User, X,
+  Info, Radio, Server, ShieldAlert, ShieldCheck, Terminal, User, X,
 } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useRunStream } from '../lib/useRunStream';
 import { cleanTask, duration, splitOpening, timeAgo } from '../lib/format';
 import { CommandBlock, Panel, RiskBadge, Spinner, StatusPill } from '../components/ui';
 import { Markdown } from '../components/Markdown';
+import { TrustDialog, TrustedChip, canTrust } from '../components/TrustDialog';
 import { RiskBar } from '../components/viz';
 import { TIER_STYLE } from '../lib/format';
 import { ReportActions } from '../components/ReportActions';
@@ -272,7 +273,7 @@ export function RunDetail() {
           return (
             <div key={step.id} className="space-y-3">
               {m.content && (
-                <Bubble icon={<Bot size={15} />} tint="text-violet" label="Agent">
+                <Bubble icon={<Bot size={15} />} tint="text-violet" label="Agent" meta={<ModelTag model={step.model} main={run.model} />}>
                   <Markdown rateCommands={advisory}>{messageText(m.content)}</Markdown>
                   {!m.tool_calls?.length && !isLive && (
                     <FeedbackBar runId={run.id} stepId={step.id} text={messageText(m.content)} projectId={run.projectId} />
@@ -376,15 +377,30 @@ function RunContext({ context, advisory, networkChecks, targets, knowledge }: {
 }
 
 function Bubble({
-  icon, tint, label, children,
-}: { icon: React.ReactNode; tint: string; label: string; children: React.ReactNode }) {
+  icon, tint, label, meta, children,
+}: { icon: React.ReactNode; tint: string; label: string; meta?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="tile min-w-0 overflow-hidden p-4">
       <div className={clsx('mb-2 flex items-center gap-2 text-xs font-semibold uppercase tracking-wide', tint)}>
         {icon} {label}
+        {meta}
       </div>
       {children}
     </div>
+  );
+}
+
+/** The model that wrote a reply; amber when the fallback answered instead of the run's model. */
+function ModelTag({ model, main }: { model?: string | null; main?: string }) {
+  if (!model) return null;
+  const fellBack = !!main && model !== main;
+  return (
+    <span
+      className={clsx('ml-auto font-mono text-[10.5px] font-normal normal-case tracking-normal', fellBack ? 'text-amber' : 'text-dim')}
+      title={fellBack ? `${main} failed, so the fallback model ${model} answered` : `Answered by ${model}`}
+    >
+      {model}
+    </span>
   );
 }
 
@@ -417,6 +433,8 @@ function SystemStep({ content }: { content: string }) {
 function ToolCallCard({ call }: { call: ToolCall }) {
   const qc = useQueryClient();
   const [comment, setComment] = useState('');
+  /** Trusting from the approval card also approves this one; from a finished action it only trusts. */
+  const [trusting, setTrusting] = useState<null | 'approve' | 'only'>(null);
 
   const decide = useMutation({
     mutationFn: (decision: 'approve' | 'deny') =>
@@ -453,6 +471,7 @@ function ToolCallCard({ call }: { call: ToolCall }) {
           </span>
         )}
         <div className="flex-1" />
+        <TrustedChip call={call} />
         <RiskBadge tier={call.tier} />
         <StateChip call={call} />
       </div>
@@ -531,6 +550,11 @@ function ToolCallCard({ call }: { call: ToolCall }) {
               <button className="btn-danger" disabled={decide.isPending} onClick={() => decide.mutate('deny')}>
                 <X size={15} /> Reject
               </button>
+              {canTrust(call) && (
+                <button className="btn-ghost" disabled={decide.isPending} onClick={() => setTrusting('approve')} title="Approve now, and let this command run without asking next time">
+                  <ShieldCheck size={15} /> Approve &amp; trust…
+                </button>
+              )}
             </div>
             {decide.error && (
               <p role="alert" className="rounded-inner border border-red/30 bg-red/10 px-3 py-2 text-xs text-red">
@@ -550,6 +574,22 @@ function ToolCallCard({ call }: { call: ToolCall }) {
         {call.decisionComment && (
           <p className="text-xs text-muted">Reviewer note: “{call.decisionComment}”</p>
         )}
+        {!waiting && canTrust(call) && ['approved', 'executing', 'succeeded', 'failed'].includes(call.state) && (
+          <button className="inline-flex items-center gap-1 text-xs text-blue-text hover:underline" onClick={() => setTrusting('only')}>
+            <ShieldCheck size={12} /> Trust this command…
+          </button>
+        )}
+        {trusting && (
+          <TrustDialog
+            call={call}
+            onClose={() => setTrusting(null)}
+            onTrusted={(rule) => {
+              const also = trusting === 'approve' && rule.status === 'active';
+              setTrusting(null);
+              if (also) decide.mutate('approve');
+            }}
+          />
+        )}
 
         {call.resultJson && (
           <CommandBlock
@@ -558,7 +598,7 @@ function ToolCallCard({ call }: { call: ToolCall }) {
               (failed || blocked || denied) && 'border-red/30 text-red-200',
             )}
           >
-            {call.resultJson.text}
+            {stripAnsi(call.resultJson.text)}
           </CommandBlock>
         )}
       </div>

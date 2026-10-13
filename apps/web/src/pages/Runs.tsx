@@ -168,8 +168,8 @@ export function Runs() {
                     <div className="min-w-0 flex-1">
                       <div className="flex min-w-0 items-center gap-2">
                         {run.interactive && (
-                          <span className="shrink-0 rounded border border-edge px-1.5 py-px text-[10px] uppercase tracking-wider text-muted">
-                            console
+                          <span className={clsx('shrink-0 rounded border px-1.5 py-px text-[10px] uppercase tracking-wider', run.policySnapshot?.call ? 'border-violet/40 bg-violet/10 text-violet' : 'border-edge text-muted')}>
+                            {run.policySnapshot?.call ? 'call' : 'console'}
                           </span>
                         )}
                         {run.trigger === 'alert' && (

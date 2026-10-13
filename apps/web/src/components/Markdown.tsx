@@ -7,6 +7,7 @@ import { clsx } from 'clsx';
 import { Check, Copy } from 'lucide-react';
 import type { RiskTier } from '@supops/shared';
 import { post } from '../lib/api';
+import { useApp } from '../lib/store';
 import { copyText } from '../lib/clipboard';
 import { Diagram } from './Diagram';
 
@@ -87,11 +88,33 @@ const components: Components = {
       <table className="w-full border-collapse text-xs">{children}</table>
     </div>
   ),
-  th: ({ children }) => (
-    <th className="border border-hairline bg-tile-2 px-2 py-1.5 text-left font-semibold text-muted">{children}</th>
+  // Short cells ("Running", "1/1", "7d23h") stay on one line; only long ones wrap,
+  // at spaces and hyphens. Otherwise a column of long names squeezes the short
+  // columns until their words break letter by letter.
+  th: ({ node, children }) => (
+    <th className={clsx('border border-hairline bg-tile-2 px-2 py-1.5 text-left font-semibold text-muted', cellWrap(node))}>{children}</th>
   ),
-  td: ({ children }) => <td className="border border-hairline px-2 py-1.5 text-ink">{children}</td>,
+  td: ({ node, children }) => <td className={clsx('border border-hairline px-2 py-1.5 text-ink', cellWrap(node))}>{children}</td>,
 };
+
+/** Text of a table cell, from its syntax tree. */
+function cellText(node: unknown): string {
+  const n = node as { type?: string; value?: string; children?: unknown[] } | undefined;
+  if (!n) return '';
+  if (n.type === 'text') return n.value ?? '';
+  return (n.children ?? []).map(cellText).join('');
+}
+
+const SHORT_CELL = 24;
+
+function cellWrap(node: unknown): string {
+  const text = cellText(node).trim();
+  return text.length <= SHORT_CELL
+    ? 'whitespace-nowrap'
+    : // Wrap long cells between words and at hyphens, never mid-word; a single
+      // unbreakable token makes the table scroll sideways instead.
+      'min-w-[10rem] [overflow-wrap:normal] [&_code]:[overflow-wrap:normal]';
+}
 
 /** One suggested command: its explanation (from the # comments above it) and its lines. */
 interface CommandItem {
@@ -141,7 +164,7 @@ function parseCommands(text: string): { items: CommandItem[]; trailing: string }
   return { items, trailing: note.join(' ') };
 }
 
-type Verdict = { tier: RiskTier; reason: string; recognised: boolean };
+type Verdict = { tier: RiskTier; reason: string; recognised: boolean; trusted?: boolean };
 
 /**
  * What a verdict means to someone about to paste the command, in the product's
@@ -172,8 +195,8 @@ function CopyButton({ text, label, className }: { text: string; label: string; c
   return (
     <button
       type="button"
-      onClick={async () => {
-        if (await copyText(text)) {
+      onClick={async (e) => {
+        if (await copyText(text, e.currentTarget.ownerDocument)) {
           setCopied(true);
           setTimeout(() => setCopied(false), 1500);
         }
@@ -195,10 +218,11 @@ function CopyButton({ text, label, className }: { text: string; label: string; c
  */
 function ShellBlock({ text }: { text: string }) {
   const rate = useContext(RateCommands);
+  const projectId = useApp((s) => s.projectId);
   const { items, trailing } = parseCommands(text);
   const ratings = useQuery({
-    queryKey: ['rate-commands', items.map((i) => i.line)],
-    queryFn: () => post<Verdict[]>('/runs/rate-commands', { commands: items.map((i) => i.line) }),
+    queryKey: ['rate-commands', projectId, items.map((i) => i.line)],
+    queryFn: () => post<Verdict[]>('/runs/rate-commands', { commands: items.map((i) => i.line), projectId }),
     enabled: rate && items.length > 0,
     staleTime: Infinity,
   });
@@ -227,6 +251,11 @@ function ShellBlock({ text }: { text: string }) {
                   <span title={v.title} className={clsx('mt-px inline-flex shrink-0 items-center rounded-full border px-2 py-px font-sans text-[10px] font-semibold uppercase leading-4 tracking-wide', v.pill)}>
                     {v.label}
                   </span>
+                  {ratings.data?.[i]?.trusted && (
+                    <span title="Your team trusts this command: it runs without approval where SupOps has access." className="mt-px inline-flex shrink-0 items-center rounded-full border border-green/40 bg-green/10 px-2 py-px font-sans text-[10px] font-semibold uppercase leading-4 tracking-wide text-green">
+                      Trusted
+                    </span>
+                  )}
                   {it.note && <span className="min-w-0 basis-full font-sans text-xs leading-5 text-muted sm:flex-1 sm:basis-auto">{it.note}</span>}
                 </div>
                 <code className="mt-1.5 block whitespace-pre-wrap font-mono text-[12.5px] leading-relaxed text-ink [overflow-wrap:anywhere]">

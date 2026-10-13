@@ -10,6 +10,7 @@ import { Layout } from './components/Layout';
 import { Login } from './pages/Login';
 import { Dashboard } from './pages/Dashboard';
 import { Console } from './pages/Console';
+import { Call } from './pages/Call';
 import { Investigate } from './pages/Investigate';
 import { Runs } from './pages/Runs';
 import { RunDetail } from './pages/RunDetail';
@@ -61,6 +62,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/" element={<Dashboard />} />
             <Route path="/investigate" element={<Investigate />} />
             <Route path="/console" element={<Console />} />
+            <Route path="/call" element={<Call />} />
             <Route path="/runs" element={<Runs />} />
             <Route path="/runs/:id" element={<RunDetail />} />
             <Route path="/approvals" element={<Approvals />} />

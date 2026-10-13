@@ -27,6 +27,7 @@ interface LlmSettings {
   baseUrl: string;
   model: string;
   classifierModel: string;
+  fallbackModel: string;
   runConcurrency: number;
   apiKeyConfigured: boolean;
   apiKeySource: 'database' | 'environment' | 'none';
@@ -39,6 +40,8 @@ const PRESETS = [
     baseUrl: 'https://generativelanguage.googleapis.com/v1beta/openai/',
     model: 'gemini-3.8-flash',
     classifierModel: 'gemini-3.5-flash-lite',
+    // An older generation: an outage or overload of the newest model rarely reaches it.
+    fallbackModel: 'gemini-3.5-flash',
     note: 'Needs a key from aistudio.google.com/apikey',
   },
   {
@@ -46,6 +49,7 @@ const PRESETS = [
     baseUrl: 'http://localhost:11434/v1/',
     model: 'qwen3:8b',
     classifierModel: 'qwen3:8b',
+    fallbackModel: '',
     note: 'No key needed; runs on your own machine',
   },
   {
@@ -53,6 +57,7 @@ const PRESETS = [
     baseUrl: 'http://localhost:1234/v1/',
     model: 'local-model',
     classifierModel: 'local-model',
+    fallbackModel: '',
     note: 'No key needed',
   },
 ];
@@ -81,9 +86,10 @@ export function Settings() {
 
   const test = useMutation({
     mutationFn: () =>
-      post<{ ok: boolean; detail: string; model: string; baseUrl: string }>('/settings/llm/test', {
+      post<{ ok: boolean; detail: string; model: string; baseUrl: string; fallback?: { model: string; ok: boolean; detail: string } }>('/settings/llm/test', {
         baseUrl: form?.baseUrl,
         model: form?.model,
+        fallbackModel: form?.fallbackModel ?? '',
         ...(apiKey ? { apiKey } : {}),
       }),
   });
@@ -94,6 +100,7 @@ export function Settings() {
         baseUrl: form?.baseUrl,
         model: form?.model,
         classifierModel: form?.classifierModel,
+        fallbackModel: form?.fallbackModel?.trim() ?? '',
         runConcurrency: Number(form?.runConcurrency),
         ...(clearKey ? { apiKey: '' } : apiKey ? { apiKey } : {}),
       }),
@@ -134,6 +141,7 @@ export function Settings() {
     (form.baseUrl !== saved.data.baseUrl ||
       form.model !== saved.data.model ||
       form.classifierModel !== saved.data.classifierModel ||
+      (form.fallbackModel ?? '').trim() !== (saved.data.fallbackModel ?? '') ||
       Number(form.runConcurrency) !== saved.data.runConcurrency ||
       !!apiKey ||
       clearKey);
@@ -158,7 +166,7 @@ export function Settings() {
                     title={p.note}
                     onClick={() =>
                       setForm((f) =>
-                        f ? { ...f, baseUrl: p.baseUrl, model: p.model, classifierModel: p.classifierModel } : f,
+                        f ? { ...f, baseUrl: p.baseUrl, model: p.model, classifierModel: p.classifierModel, fallbackModel: p.fallbackModel } : f,
                       )
                     }
                     className={clsx(
@@ -222,11 +230,12 @@ export function Settings() {
                 <Field label="Model" hint="Used for the agent loop.">
                   <input className="input font-mono text-xs" value={form.model} onChange={set('model')} />
                 </Field>
-                <Field label="Classifier model" hint="Cheap fallback for unreadable commands.">
+                <Field label="Fallback model" hint="Tried when the main model is down, overloaded or rate limited. Empty for none.">
                   <input
                     className="input font-mono text-xs"
-                    value={form.classifierModel}
-                    onChange={set('classifierModel')}
+                    value={form.fallbackModel ?? ''}
+                    onChange={set('fallbackModel')}
+                    placeholder="e.g. gemini-3.5-flash"
                   />
                 </Field>
 
@@ -256,7 +265,12 @@ export function Settings() {
                 >
                   {test.data.ok
                     ? `${test.data.model} responded: “${test.data.detail}”`
-                    : test.data.detail}
+                    : `${test.data.model}: ${test.data.detail}`}
+                  {test.data.fallback && (
+                    <span className={clsx('mt-1 block text-xs', test.data.fallback.ok ? 'text-green' : 'text-red')}>
+                      Fallback {test.data.fallback.model}: {test.data.fallback.ok ? 'responded' : test.data.fallback.detail}
+                    </span>
+                  )}
                 </div>
               )}
               {save.error && (

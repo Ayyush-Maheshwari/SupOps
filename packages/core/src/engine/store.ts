@@ -101,6 +101,8 @@ export class RunStore {
       promptTokens?: number;
       completionTokens?: number;
       latencyMs?: number;
+      /** The model that wrote the reply. */
+      model?: string;
       /** 'engine' for a message SupOps wrote itself; see run_steps.origin. */
       origin?: 'engine';
     } = {},
@@ -118,6 +120,7 @@ export class RunStore {
         promptTokens: opts.promptTokens ?? null,
         completionTokens: opts.completionTokens ?? null,
         latencyMs: opts.latencyMs ?? null,
+        model: opts.model ?? null,
         origin: opts.origin ?? null,
         createdAt: new Date(),
       })

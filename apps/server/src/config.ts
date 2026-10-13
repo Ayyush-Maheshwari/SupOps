@@ -52,6 +52,8 @@ export const config = {
     apiKey: process.env.LLM_API_KEY ?? '',
     model: process.env.LLM_MODEL ?? 'gemini-3.8-flash',
     classifierModel: process.env.LLM_CLASSIFIER_MODEL ?? 'gemini-3.5-flash-lite',
+    /** Tried when the main model fails (overloaded, rate limited, unknown). Empty: none. */
+    fallbackModel: process.env.LLM_FALLBACK_MODEL ?? '',
   },
 };
 

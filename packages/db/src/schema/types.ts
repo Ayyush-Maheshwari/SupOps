@@ -37,6 +37,8 @@ export interface RiskPolicy {
   advisory?: boolean;
   /** Advisory runs only: read-only network checks (net_check) from the SupOps server are allowed. */
   networkChecks?: boolean;
+  /** Set only on a run's snapshot: a live call with a client (advisory, conversational). */
+  call?: boolean;
 }
 
 export const DEFAULT_RISK_POLICY: RiskPolicy = {

@@ -187,8 +187,9 @@ export const ALERT_STATUS_STYLE: Record<string, { label: string; text: string; d
  * the context as a short summary. Follow-ups have no such framing and pass through.
  */
 export function splitOpening(content: string): { task: string; context: string | null } {
-  const m = content.match(/^Project: [^\n]*\n[\s\S]*?\n\nTask:\n([\s\S]*)$/);
-  return m ? { task: m[1]!.trim(), context: content.slice(0, content.length - m[1]!.length).replace(/\n\nTask:\n$/, '').trim() } : { task: content, context: null };
+  // "Task:" for runs, "What the call is about:" for a live call (see buildOpeningMessage).
+  const m = content.match(/^Project: [^\n]*\n[\s\S]*?\n\n(?:Task|What the call is about):\n([\s\S]*)$/);
+  return m ? { task: m[1]!.trim(), context: content.slice(0, content.length - m[1]!.length).replace(/\n\n(?:Task|What the call is about):\n$/, '').trim() } : { task: content, context: null };
 }
 
 /** The operator's own words from a run's opening message (see splitOpening). */

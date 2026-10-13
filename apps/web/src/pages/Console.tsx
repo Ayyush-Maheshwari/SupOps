@@ -1,14 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { clsx } from 'clsx';
-import { messageText } from '@supops/shared';
-import { Bot, Check, RotateCcw, Send, Server, User, X } from 'lucide-react';
+import { messageText, stripAnsi } from '@supops/shared';
+import { Bot, Check, RotateCcw, Send, Server, ShieldCheck, User, X } from 'lucide-react';
 import { api, post } from '../lib/api';
 import { useApp } from '../lib/store';
 import { useRunStream } from '../lib/useRunStream';
 import { cleanTask, OUTCOME_LABEL, TIER_STYLE, timeAgo } from '../lib/format';
 import { PageHeader } from '../components/Layout';
 import { Markdown } from '../components/Markdown';
+import { TrustDialog, TrustedChip, canTrust } from '../components/TrustDialog';
 import { Terminal, type TerminalLine } from '../components/Terminal';
 import { CommandBlock, Empty, RiskBadge, Spinner, StatusPill } from '../components/ui';
 import type { Agent, Run, RunDetail, Target, ToolCall } from '../lib/types';
@@ -180,7 +181,7 @@ export function Console() {
       });
       const finished = c.resultJson?.text;
       const streaming = liveOutput.current.get(c.toolCallId);
-      const body = finished ?? streaming;
+      const body = stripAnsi(finished ?? streaming ?? '');
       if (body) for (const line of body.split('\n')) out.push({ kind: 'output', text: line });
       else if (c.state === 'awaiting_approval') out.push({ kind: 'note', text: 'waiting for approval…' });
       else if (c.state === 'executing') out.push({ kind: 'note', text: 'running…' });
@@ -261,7 +262,7 @@ export function Console() {
               return (
                 <div key={step.id} className="space-y-2">
                   {m.content && (
-                    <Bubble icon={<Bot size={13} />} tint="text-violet" label="Assistant">
+                    <Bubble icon={<Bot size={13} />} tint="text-violet" label="Assistant" meta={<ModelTag model={step.model} main={run?.model} />}>
                       <Markdown rateCommands={!!run?.policySnapshot?.advisory}>{messageText(m.content)}</Markdown>
                       {!m.tool_calls?.length && runId && projectId && !busy && (
                         <FeedbackBar runId={runId} stepId={step.id} text={messageText(m.content)} projectId={projectId} />
@@ -410,12 +411,13 @@ export function Console() {
 }
 
 function Bubble({
-  icon, tint, label, children,
-}: { icon: React.ReactNode; tint: string; label: string; children: React.ReactNode }) {
+  icon, tint, label, meta, children,
+}: { icon: React.ReactNode; tint: string; label: string; meta?: React.ReactNode; children: React.ReactNode }) {
   return (
     <div className="rounded-inner border border-hairline bg-tile-2/50 p-3">
       <div className={clsx('mb-1.5 flex items-center gap-1.5 text-[10px] font-semibold uppercase tracking-wider', tint)}>
         {icon} {label}
+        {meta}
       </div>
       {children}
     </div>
@@ -426,6 +428,7 @@ function Bubble({
 function ActionCard({ call }: { call: ToolCall }) {
   const qc = useQueryClient();
   const [comment, setComment] = useState('');
+  const [trusting, setTrusting] = useState<null | 'approve' | 'only'>(null);
   const waiting = call.state === 'awaiting_approval';
 
   const decide = useMutation({
@@ -444,6 +447,7 @@ function ActionCard({ call }: { call: ToolCall }) {
       <div className="mb-2 flex items-center gap-2">
         <span className="font-mono text-[11px] text-muted">{call.toolKey}</span>
         <RiskBadge tier={call.tier} />
+        <TrustedChip call={call} />
         <span className={clsx('ml-auto text-[11px]', call.isError ? 'text-red' : 'text-muted')}>
           {OUTCOME_LABEL[call.state] ?? call.state}
         </span>
@@ -467,6 +471,11 @@ function ActionCard({ call }: { call: ToolCall }) {
             <button className="btn-danger !min-h-[36px] !text-xs" disabled={decide.isPending} onClick={() => decide.mutate('deny')}>
               <X size={14} /> Reject
             </button>
+            {canTrust(call) && (
+              <button className="btn-ghost !min-h-[36px] !text-xs" disabled={decide.isPending} onClick={() => setTrusting('approve')} title="Approve now, and let this command run without asking next time">
+                <ShieldCheck size={14} /> Approve &amp; trust…
+              </button>
+            )}
           </div>
           {decide.error && (
             <p role="alert" className="rounded-inner border border-red/30 bg-red/10 px-2.5 py-1.5 text-[11px] text-red">
@@ -480,6 +489,22 @@ function ActionCard({ call }: { call: ToolCall }) {
       )}
 
       {call.decisionComment && <p className="mt-2 text-[11px] text-muted">Note: “{call.decisionComment}”</p>}
+      {!waiting && canTrust(call) && ['approved', 'executing', 'succeeded', 'failed'].includes(call.state) && (
+        <button className="mt-2 inline-flex items-center gap-1 text-[11px] text-blue-text hover:underline" onClick={() => setTrusting('only')}>
+          <ShieldCheck size={11} /> Trust this command…
+        </button>
+      )}
+      {trusting && (
+        <TrustDialog
+          call={call}
+          onClose={() => setTrusting(null)}
+          onTrusted={(rule) => {
+            const also = trusting === 'approve' && rule.status === 'active';
+            setTrusting(null);
+            if (also) decide.mutate('approve');
+          }}
+        />
+      )}
     </div>
   );
 }
@@ -549,5 +574,19 @@ function ScopePicker({
         );
       })}
     </div>
+  );
+}
+
+/** The model that wrote a reply; amber when the fallback answered instead of the run's model. */
+function ModelTag({ model, main }: { model?: string | null; main?: string }) {
+  if (!model) return null;
+  const fellBack = !!main && model !== main;
+  return (
+    <span
+      className={clsx('ml-auto font-mono text-[10.5px] font-normal normal-case tracking-normal', fellBack ? 'text-amber' : 'text-dim')}
+      title={fellBack ? `${main} failed, so the fallback model ${model} answered` : `Answered by ${model}`}
+    >
+      {model}
+    </span>
   );
 }

@@ -5,6 +5,7 @@ export * from './engine/index.ts';
 export * from './report.ts';
 export * from './pdf/index.ts';
 export * from './report-doc.ts';
+export * from './client-report.ts';
 export * from './health-judge.ts';
 export * from './maintenance/index.ts';
 export * from './learning/signature.ts';

@@ -88,4 +88,10 @@ export interface RiskAssessment {
   /** The most that could have run without approval here, and why -- shown on the approval card. */
   ceiling?: RiskTier;
   ceilingReason?: string;
+  /**
+   * Set when a person's standing approval (a trusted command) let this run without
+   * waiting. The tier above is still the engine's own: trust skips the wait, it never
+   * makes an action look safer than it is.
+   */
+  trusted?: { ruleId: string; by: string | null; byName: string | null };
 }

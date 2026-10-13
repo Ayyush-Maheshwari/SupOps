@@ -20,6 +20,8 @@ export interface StoredLlmSettings {
   baseUrl: string;
   model: string;
   classifierModel: string;
+  /** Tried when the main model fails (same provider). Absent or empty: no fallback. */
+  fallbackModel?: string;
   /** AES-256-GCM envelope, or null when the key should fall back to the environment. */
   apiKeyEnc: string | null;
   runConcurrency: number;

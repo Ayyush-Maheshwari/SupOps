@@ -63,6 +63,7 @@ export class ScriptedLLM {
       promptTokens: 10,
       completionTokens: 5,
       latencyMs: 1,
+      model: 'scripted',
     };
   }
 

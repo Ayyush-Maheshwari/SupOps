@@ -20,6 +20,7 @@ export interface PublicLlmSettings {
   baseUrl: string;
   model: string;
   classifierModel: string;
+  fallbackModel: string;
   runConcurrency: number;
   /** Whether a usable key exists, and where it came from. */
   apiKeyConfigured: boolean;
@@ -30,6 +31,8 @@ export interface LlmSettingsPatch {
   baseUrl?: string;
   model?: string;
   classifierModel?: string;
+  /** "" turns the fallback off. */
+  fallbackModel?: string;
   runConcurrency?: number;
   /**
    * `undefined` leaves the stored key alone -- important, because the UI cannot show
@@ -65,6 +68,8 @@ export class SettingsStore {
       baseUrl: stored?.baseUrl || config.llm.baseUrl,
       model: stored?.model || config.llm.model,
       classifierModel: stored?.classifierModel || config.llm.classifierModel,
+      // An empty stored value means "turned off", so only a missing one falls back to the environment.
+      fallbackModel: (stored?.fallbackModel ?? config.llm.fallbackModel).trim(),
       apiKey: this.resolveApiKey(stored),
     };
   }
@@ -186,6 +191,7 @@ export class SettingsStore {
       baseUrl: resolved.baseUrl,
       model: resolved.model,
       classifierModel: resolved.classifierModel ?? '',
+      fallbackModel: resolved.fallbackModel ?? '',
       runConcurrency: this.concurrency(),
       apiKeyConfigured: !!resolved.apiKey,
       apiKeySource: source,
@@ -198,6 +204,7 @@ export class SettingsStore {
       baseUrl: patch.baseUrl ?? stored?.baseUrl ?? config.llm.baseUrl,
       model: patch.model ?? stored?.model ?? config.llm.model,
       classifierModel: patch.classifierModel ?? stored?.classifierModel ?? config.llm.classifierModel,
+      fallbackModel: (patch.fallbackModel ?? stored?.fallbackModel ?? config.llm.fallbackModel).trim(),
       runConcurrency: patch.runConcurrency ?? stored?.runConcurrency ?? config.runConcurrency,
       apiKeyEnc:
         patch.apiKey === undefined

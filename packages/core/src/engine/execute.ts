@@ -1,7 +1,7 @@
 import type { Db } from '@supops/db';
 import type { ToolOutput } from '@supops/db';
 import type { KnowledgeAccess, ResolvedTarget, ResolvedTool } from '../tools/types.ts';
-import { errOutput, redactSecrets, redactTokenPatterns } from '../tools/output.ts';
+import { AnsiStripper, errOutput, redactSecrets, redactTokenPatterns, stripAnsi } from '../tools/output.ts';
 import { pinHostKey, pinnedHostKey, resolveBecomeSecrets, resolveSecret } from './targets.ts';
 import { hashArgs, targetFingerprint } from './canonical.ts';
 import type { RunStore, ToolCallRow } from './store.ts';
@@ -109,6 +109,10 @@ export async function executeToolCall(
   // boot recovery sweeps `executing` to `unknown_outcome` rather than re-running it.
   deps.store.updateToolCall(call.id, { state: 'executing', startedAt: new Date() });
 
+  // Terminal colour codes are removed from the live stream as well as the stored result.
+  const ansi = new AnsiStripper();
+  const onChunk = deps.onChunk;
+
   let output: ToolOutput;
   try {
     output = await tool.def.execute(parsed.data as never, {
@@ -119,7 +123,14 @@ export async function executeToolCall(
       maxOutputBytes: deps.maxOutputBytes,
       signal,
       ...(params.knowledge ? { knowledge: params.knowledge } : {}),
-      ...(deps.onChunk ? { onChunk: deps.onChunk } : {}),
+      ...(onChunk
+        ? {
+            onChunk: (chunk: string) => {
+              const clean = ansi.push(chunk);
+              if (clean) onChunk(clean);
+            },
+          }
+        : {}),
       onNewHostKey: (fp) => pinHostKey(deps.db, target.id, fp),
     });
   } catch (err) {
@@ -137,7 +148,8 @@ export async function executeToolCall(
   ];
   // Exact values first (the credentials SupOps holds), then well-known token shapes
   // for secrets the command happened to print.
-  output = { ...output, text: redactTokenPatterns(secrets.length ? redactSecrets(output.text, secrets) : output.text) };
+  const text = stripAnsi(output.text);
+  output = { ...output, text: redactTokenPatterns(secrets.length ? redactSecrets(text, secrets) : text) };
   return output;
 }
 

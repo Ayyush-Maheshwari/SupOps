@@ -1,4 +1,4 @@
-import { THREAT_LABEL, diagramKey, extractMermaidBlocks, repairMermaid } from '@supops/shared';
+import { THREAT_LABEL, diagramKey, extractMermaidBlocks, repairMermaid, stripAnsi } from '@supops/shared';
 import type { ChatMessage } from '@supops/shared';
 import type { ReportInput, ReportToolCall } from './report.ts';
 import { recordedFindings } from './report.ts';
@@ -614,7 +614,8 @@ export function buildReportMarkdown(input: ReportInput, doc: ReportDoc): string 
 
 /** Keep evidence output short: the first lines that matter, never a transcript. */
 export function trimOutput(text: string, maxLines = 16, maxChars = 1400): string {
-  const clean = text.replace(/^\[exit \d+\]\n?/, '').replace(/\r/g, '').trimEnd();
+  // stripAnsi: runs recorded before output was cleaned still carry terminal colour codes.
+  const clean = stripAnsi(text).replace(/^\[exit \d+\]\n?/, '').replace(/\r/g, '').trimEnd();
   if (!clean) return '';
   const lines = clean.split('\n');
   let out = lines.slice(0, maxLines).join('\n');

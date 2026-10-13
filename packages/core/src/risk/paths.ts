@@ -180,7 +180,7 @@ function matchesGlobPrefix(path: string, pattern: string): boolean {
 }
 
 /** A shell glob as a regex over one path. */
-function globToRegex(glob: string): RegExp {
+export function globToRegex(glob: string): RegExp {
   let re = '';
   for (let i = 0; i < glob.length; i += 1) {
     const c = glob[i]!;

@@ -1,16 +1,16 @@
 import { and, asc, eq, sql } from 'drizzle-orm';
-import type { ChatMessage, ToolCallRequest, ToolMessage } from '@supops/shared';
+import type { ChatMessage, RiskAssessment, ToolCallRequest, ToolMessage } from '@supops/shared';
 import { isTerminalToolCall, tierAtMost } from '@supops/shared';
 import type { Db, RunBudget } from '@supops/db';
-import { DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_SESSION_TOOL_CALLS, agents, knowledgeDocs, projects, runKnowledge, toolCalls as toolCallsTable } from '@supops/db';
+import { DEFAULT_MAX_OUTPUT_TOKENS, DEFAULT_SESSION_TOOL_CALLS, agents, knowledgeDocs, projects, runKnowledge, toolCalls as toolCallsTable, trustedCommands, users } from '@supops/db';
 import type { LLMClient } from '../llm/client.ts';
 import { backoffMs } from '../llm/client.ts';
 import { FatalLLMError, RetryableLLMError } from '../llm/errors.ts';
-import type { KnowledgeAccess, ResolvedTool, ToolDef } from '../tools/types.ts';
+import type { KnowledgeAccess, ResolvedTarget, ResolvedTool, ToolDef } from '../tools/types.ts';
 import { KNOWLEDGE_TOOL_KEYS, OBSERVABILITY_TOOL_KEYS } from '../tools/builtin.ts';
 import { readRunKnowledge, searchRunKnowledge, type RunScope } from '../knowledge/retrieve.ts';
 import { bindTools, effectiveToolKeys, type ToolRegistry } from '../tools/registry.ts';
-import { assessRisk } from '../risk/index.ts';
+import { assessRisk, matchesRule, trustEnvOf, trustText } from '../risk/index.ts';
 import type { EventSink, OutputSink } from './events.ts';
 import { nullOutputSink } from './events.ts';
 import { executeToolCall, ToolExecutionRefused } from './execute.ts';
@@ -211,6 +211,7 @@ export class Engine {
       promptTokens: result.promptTokens,
       completionTokens: result.completionTokens,
       latencyMs: result.latencyMs,
+      model: result.model,
     });
     this.store.bumpIteration(run.id, result.promptTokens, result.completionTokens);
 
@@ -436,7 +437,7 @@ export class Engine {
       }
     }
 
-    const assessment = assessRisk({
+    let assessment = assessRisk({
       def: tool.def,
       args: call.argsJson,
       rendered,
@@ -444,6 +445,14 @@ export class Engine {
       policy: run.policySnapshot,
       trigger: run.trigger,
     });
+
+    // A person already approved exactly this (a trusted command): skip the wait, keep
+    // the tier. Never for a forbidden action (that is 'block'), and never in automatic
+    // runs: an unattended or advisory run promised not to change anything on its own.
+    if (assessment.decision === 'approve' && !run.policySnapshot.unattended && !run.policySnapshot.advisory && !isNetworkTarget(target)) {
+      const trusted = this.trustedFor(run.projectId, call.toolKey, call.argsJson, target);
+      if (trusted) assessment = { ...assessment, decision: 'auto', trusted };
+    }
 
     this.store.updateToolCall(call.id, {
       state:
@@ -510,6 +519,24 @@ export class Engine {
     }
 
     return true;
+  }
+
+  /** The project's trusted command that covers this call, if any; counts the use. */
+  private trustedFor(projectId: string, toolKey: string, args: Record<string, unknown>, target: ResolvedTarget): RiskAssessment['trusted'] | null {
+    const text = trustText(toolKey, args);
+    if (!text) return null;
+    const env = trustEnvOf(target);
+    const rules = this.db
+      .select()
+      .from(trustedCommands)
+      .where(and(eq(trustedCommands.projectId, projectId), eq(trustedCommands.status, 'active')))
+      .all();
+    const hit = rules.find((r) => matchesRule(r, toolKey, text, env));
+    if (!hit) return null;
+    this.db.update(trustedCommands).set({ hits: sql`${trustedCommands.hits} + 1`, lastUsedAt: new Date() }).where(eq(trustedCommands.id, hit.id)).run();
+    const by = hit.approvedBy ?? hit.createdBy;
+    const byName = by ? this.db.select({ name: users.name }).from(users).where(eq(users.id, by)).get()?.name ?? null : null;
+    return { ruleId: hit.id, by, byName };
   }
 
   private blockCall(call: ToolCallRow, reason: string): void {

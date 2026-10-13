@@ -15,6 +15,8 @@ const patchBody = z.object({
   baseUrl: z.string().url('Enter a full URL, e.g. http://localhost:11434/v1/').optional(),
   model: z.string().min(1).max(120).optional(),
   classifierModel: z.string().max(120).optional(),
+  /** Tried when the main model fails; "" turns it off. */
+  fallbackModel: z.string().max(120).optional(),
   runConcurrency: z.number().int().min(1).max(20).optional(),
   /**
    * Omit to leave the stored key untouched -- the UI cannot display it, so it must
@@ -59,10 +61,15 @@ settingsRoutes.post('/llm/test', async (req, res) => {
   }
 
   const overrides = parsed.data;
-  const hasOverride = Object.values(overrides).some((v) => v !== undefined && v !== '');
+  const hasOverride = Object.values(overrides).some((v) => v !== undefined && v !== '') || overrides.fallbackModel !== undefined;
 
   const client = hasOverride
-    ? new LLMClient({ ...settingsStore.resolve(), ...stripEmpty(overrides) })
+    ? new LLMClient({
+        ...settingsStore.resolve(),
+        ...stripEmpty(overrides),
+        // "" is meaningful here: test without a fallback.
+        ...(overrides.fallbackModel !== undefined ? { fallbackModel: overrides.fallbackModel } : {}),
+      })
     : llm;
 
   const result = await client.ping();

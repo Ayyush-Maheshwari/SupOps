@@ -24,7 +24,8 @@ export interface PreparedImage {
 
 let counter = 0;
 
-async function prepare(file: File): Promise<PreparedImage> {
+/** One image, downscaled and encoded the way the server expects. */
+export async function prepareImage(file: File): Promise<PreparedImage> {
   if (!file.type.startsWith('image/')) throw new Error(`${file.name || 'That file'} is not an image.`);
   if (file.size > MAX_INPUT_BYTES) throw new Error(`${file.name || 'That image'} is larger than 25 MB.`);
 
@@ -83,7 +84,7 @@ export function useImageAttachments() {
     setBusy(true);
     try {
       const prepared: PreparedImage[] = [];
-      for (const f of list.slice(0, room)) prepared.push(await prepare(f));
+      for (const f of list.slice(0, room)) prepared.push(await prepareImage(f));
       setImages((cur) => [...cur, ...prepared].slice(0, MAX_IMAGES));
       if (list.length > room) setError(`Only ${MAX_IMAGES} images can be attached; the rest were skipped.`);
     } catch (e) {

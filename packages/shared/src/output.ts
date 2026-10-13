@@ -139,3 +139,46 @@ export function redactTokenPatterns(text: string): string {
   for (const { id, re } of TOKEN_PATTERNS) out = out.replace(re, `«redacted:${id}»`);
   return out;
 }
+
+/**
+ * Terminal escape sequences: colours (`grep --color`, `ls`), cursor and erase codes,
+ * window titles. Commands run in a terminal session, so tools colour their output;
+ * as text those codes are noise for the reader and for the model (`ESC[01;31mESC[K`
+ * around every grep match). Only real sequences, starting with the ESC byte, are
+ * removed, so text that merely looks like `[01;31m` is left alone.
+ */
+// CSI (ESC [ ... final), OSC (ESC ] ... BEL or ESC \), and two-byte escapes (ESC =, ESC (B ...).
+const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)|\x1b[()][0-9A-Za-z]|\x1b[=>78DEHMNOZc]/g;
+
+export function stripAnsi(text: string): string {
+  return text.includes('\x1b') ? text.replace(ANSI_RE, '') : text;
+}
+
+/** A complete escape sequence at the start of the text. */
+const ANSI_AT_START = new RegExp(`^(?:${ANSI_RE.source})`);
+
+/**
+ * stripAnsi for streamed output: a sequence split across two chunks
+ * (`ESC[01;3` then `1m`) is held back until the next chunk completes it.
+ */
+export class AnsiStripper {
+  private held = '';
+
+  push(chunk: string): string {
+    const text = this.held + chunk;
+    this.held = '';
+    const esc = text.lastIndexOf('\x1b');
+    // A short unfinished sequence at the very end: keep it for the next chunk.
+    if (esc !== -1 && text.length - esc < 64 && !ANSI_AT_START.test(text.slice(esc))) {
+      this.held = text.slice(esc);
+      return stripAnsi(text.slice(0, esc));
+    }
+    return stripAnsi(text);
+  }
+
+  flush(): string {
+    const rest = this.held;
+    this.held = '';
+    return stripAnsi(rest);
+  }
+}

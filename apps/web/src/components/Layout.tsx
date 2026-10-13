@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { PageErrorBoundary } from './PageErrorBoundary';
 import { useQuery } from '@tanstack/react-query';
 import { clsx } from 'clsx';
 import {
-  Bell, BookOpen, ChevronDown, Download, ChevronLeft, ChevronRight, ChevronsUpDown, HeartPulse, LayoutDashboard, LogOut, Play, Plus, Server, Settings as SettingsIcon, ShieldCheck, Sparkles, Terminal, TerminalSquare, Users as UsersIcon,
+  Bell, BookOpen, ChevronDown, Download, ChevronLeft, ChevronRight, ChevronsUpDown, Headset, HeartPulse, LayoutDashboard, LogOut, Play, Plus, Server, Settings as SettingsIcon, ShieldCheck, Sparkles, Terminal, TerminalSquare, Users as UsersIcon,
 } from 'lucide-react';
 import { useInstall } from '../lib/pwa';
 import { ObservabilityIcon } from './icons/ObservabilityIcon';
@@ -31,6 +32,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
       { to: '/', label: 'Dashboard', icon: LayoutDashboard, end: true },
       { to: '/investigate', label: 'Investigate', icon: Terminal },
       { to: '/console', label: 'Console', icon: TerminalSquare },
+      { to: '/call', label: 'Call', icon: Headset },
     ],
   },
   {
@@ -58,6 +60,7 @@ const GROUPS: Array<{ label: string; items: NavItem[] }> = [
 export function Layout() {
   const { user, signOut, projectId, setProjectId, sidebarCollapsed, setSidebarCollapsed, toggleSidebar } = useApp();
   const navigate = useNavigate();
+  const location = useLocation();
   const [pickerOpen, setPickerOpen] = useState(false);
   const [newProjectOpen, setNewProjectOpen] = useState(false);
 
@@ -308,7 +311,9 @@ export function Layout() {
       </aside>
 
       <main className="flex min-h-0 flex-1 flex-col overflow-y-auto">
-        <Outlet />
+        <PageErrorBoundary key={location.pathname}>
+          <Outlet />
+        </PageErrorBoundary>
       </main>
 
       <NewProjectDialog
