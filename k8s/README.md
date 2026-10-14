@@ -12,7 +12,7 @@ into) the node — there's no registry in the default setup.
 
 **If Docker is installed on the node:**
 ```bash
-git clone https://github.com/Ayyush-Maheshwari/SupOps.git
+git clone https://github.com/SupOps/SupOps.git
 cd SupOps
 docker build -t supops:local .
 docker save supops:local | sudo k3s ctr images import -

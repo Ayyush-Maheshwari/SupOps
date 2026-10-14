@@ -7,6 +7,8 @@
 AI root cause analysis, human-in-the-loop auto-remediation and predictive alerting, on top of the
 Prometheus, Grafana and Alertmanager you already run. Self-hosted, and works with any model.
 
+**🌐 [supops.github.io](https://supops.github.io)**
+
 ![Self-hosted](https://img.shields.io/badge/self--hosted-100%25-0A84FF?style=flat-square)
 ![Runs on Docker](https://img.shields.io/badge/docker-one%20command-2496ED?style=flat-square&logo=docker&logoColor=white)
 ![Node](https://img.shields.io/badge/node-%E2%89%A522-3C873A?style=flat-square&logo=node.js&logoColor=white)
@@ -80,7 +82,7 @@ No config needed: it generates and persists its own secrets and creates the admi
 run. Nothing about your machine is baked into the image.
 
 ```bash
-git clone https://github.com/Ayyush-Maheshwari/SupOps.git
+git clone https://github.com/SupOps/SupOps.git
 cd SupOps
 docker compose up --build      # first build takes a few minutes (it compiles a native SQLite module)
 ```
