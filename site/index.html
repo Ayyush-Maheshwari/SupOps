@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SupOps: open-source, self-hosted AIOps with human-approved fixes</title>
+<meta name="description" content="SupOps goes from alert to root cause to fix on the Prometheus and Kubernetes you already run. Self-hosted, any model, and you approve every change.">
+<meta name="theme-color" content="#0a0b10">
+<meta property="og:type" content="website">
+<meta property="og:title" content="SupOps: AIOps that asks before it acts">
+<meta property="og:description" content="Open-source, self-hosted AIOps. Evidence-cited root cause, a risk engine that can only raise, and your approval on every change.">
+<meta property="og:image" content="img/approvals.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" type="image/png" href="img/brand-mark.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<link rel="stylesheet" href="styles.css">
+<script type="application/ld+json">
+{"@context":"https://schema.org","@type":"SoftwareApplication","name":"SupOps","applicationCategory":"DeveloperApplication","operatingSystem":"Linux, Docker, Kubernetes","license":"https://www.apache.org/licenses/LICENSE-2.0","description":"Open-source, self-hosted AIOps: AI root cause analysis and predictive alerting with human-approved remediation.","offers":{"@type":"Offer","price":"0","priceCurrency":"USD"},"codeRepository":"https://github.com/Ayyush-Maheshwari/SupOps"}
+</script>
+</head>
+<body>
+<a class="skip" href="#main">Skip to content</a>
+<header class="nav">
+  <nav class="wrap" aria-label="Main">
+    <a href="./" aria-label="SupOps home"><img class="logo" src="img/brand-lockup.png" width="851" height="256" alt="SupOps"></a>
+    <ul>
+      <li><a href="#safety">Safety</a></li>
+      <li><a href="#start">Quickstart</a></li>
+      <li><a href="faq.html">FAQ</a></li>
+      <li><a href="https://github.com/Ayyush-Maheshwari/SupOps">GitHub</a></li>
+    </ul>
+  </nav>
+</header>
+
+<main id="main">
+<section class="hero">
+  <div class="wrap">
+    <h1>From alert to root cause to fix. You approve every change.</h1>
+    <p class="lede">SupOps is open-source AIOps for the stack you already run. It reads your Prometheus, Loki, Kubernetes and Slack, cites its evidence, proposes a fix, and waits for you.</p>
+    <div class="actions">
+      <a class="btn primary" href="#start">Run it with Docker</a>
+      <a class="link" href="#safety">How the risk engine works</a>
+      <a class="link" href="https://github.com/Ayyush-Maheshwari/SupOps">Source on GitHub</a>
+    </div>
+    <p class="meta facts">Apache-2.0 &nbsp;/&nbsp; self-hosted &nbsp;/&nbsp; nothing installed on your servers &nbsp;/&nbsp; any OpenAI-compatible model, including local</p>
+    <div class="frame">
+      <div class="bar" aria-hidden="true"><i></i><i></i><i></i></div>
+      <img src="img/approvals.png" width="2880" height="1720" fetchpriority="high"
+           alt="The SupOps Approvals page: a high-risk ssh_exec command, sudo systemctl restart api, waiting for a decision, with the agent's stated reason and a Review in context button.">
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="loop">
+  <div class="wrap">
+    <p class="idx"><b>01</b> &nbsp;The loop</p>
+    <div>
+      <h2>Monitoring tells you something is wrong. SupOps works out why.</h2>
+      <p>Most AI-for-ops tools stop at a paragraph of advice. SupOps runs the read-only checks itself and, where a fix is safe, proposes it. The human is a step in the loop.</p>
+      <div class="body">
+        <ol class="loop">
+          <li>Alert<small>Alertmanager, Prometheus, Grafana, Slack</small></li>
+          <li>Evidence<small>Fixed read-only checks</small></li>
+          <li>Root cause<small>Cites the evidence</small></li>
+          <li>Proposed fix<small>Exact command and intent</small></li>
+          <li class="you">Your approval<small>Every change</small></li>
+          <li>Verified<small>Outcome checked and recorded</small></li>
+        </ol>
+        <figure class="shotcard" style="margin-top:28px">
+          <img src="img/dashboard.png" width="1920" height="1200" loading="lazy"
+               alt="The SupOps dashboard: latest run, approvals awaiting you, an autonomy ring, fleet health, recent runs and registered targets.">
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="safety">
+  <div class="wrap">
+    <p class="idx"><b>02</b> &nbsp;Safety</p>
+    <div>
+      <h2>Every stage can only raise the risk.</h2>
+      <p>Each proposed action passes five stages: baseline, arguments, target, model, override. Any stage may make it riskier. None may make it safer. A log line that says &ldquo;pre-approved by ops&rdquo; buys an attacker more prompts, never fewer.</p>
+      <div class="body">
+        <div class="pair">
+          <div class="demo" id="gate">
+            <div class="demo-bar"><span>approval gate</span><span>illustrative</span></div>
+            <div class="demo-body">
+              <div class="cmd" aria-label="Proposed command"><span class="caret"></span></div>
+              <div class="row"><span class="tier t-medium" hidden>medium</span><span class="why">Intent: restart checkout after the bad deploy.</span></div>
+              <div class="row" hidden>
+                <button class="btn primary small" id="g-approve" type="button">Approve</button>
+                <button class="btn small" id="g-reject" type="button">Reject</button>
+                <button class="btn small" id="g-reset" type="button">Reset</button>
+              </div>
+              <p class="result" aria-live="polite"></p>
+            </div>
+          </div>
+          <div class="demo" id="ladder">
+            <div class="demo-bar"><span>risk ladder</span><span>pick a command</span></div>
+            <div class="demo-body">
+              <div class="examples" role="group" aria-label="Example commands"></div>
+              <div class="cmd" aria-label="Command being rated"></div>
+              <ol class="stages" aria-label="Stages, in order"></ol>
+              <p class="verdict" aria-live="polite"></p>
+            </div>
+          </div>
+        </div>
+
+        <dl class="tiers" style="margin-top:20px">
+          <div><dt><span class="tier t-read_only">read_only</span><span class="tier t-low">low</span></dt><dd>Run automatically: <code>df</code>, <code>systemctl status</code>, <code>kubectl get pods</code>.</dd></div>
+          <div><dt><span class="tier t-medium">medium</span><span class="tier t-high">high</span></dt><dd>Pause and wait, showing the exact command, the stated intent and why it was flagged.</dd></div>
+          <div><dt><span class="tier t-forbidden">forbidden</span></dt><dd>Never runs, whoever approves. On a production target, an irreversible delete of a database, bucket or cluster is forbidden too.</dd></div>
+        </dl>
+
+        <div class="cols">
+          <div><h3>Parsed, not pattern-matched</h3><p><code>rm -rf /</code> has endless spellings. Anything that cannot be read statically (substitution, backticks, a variable that could become a command) fails closed at high.</p></div>
+          <div><h3>Survives a restart</h3><p>A run paused at an approval resumes the same hours or deploys later. A command dispatched but never confirmed is marked unknown and never silently re-run.</p></div>
+          <div><h3>Tested against the old rules</h3><p>A parity test asserts the current rules are never looser than the legacy set, except for reads listed on purpose.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="diagnosis">
+  <div class="wrap">
+    <p class="idx"><b>03</b> &nbsp;Diagnosis</p>
+    <div>
+      <h2>It shows its work, and it may say it doesn&rsquo;t know.</h2>
+      <p>When an incident opens, a fixed set of read-only checks runs first. The diagnosis must cite that evidence. A citation to evidence that does not exist is flagged, and &ldquo;inconclusive&rdquo; is an allowed answer.</p>
+      <div class="body">
+        <div class="diag">
+          <div class="demo">
+            <div class="demo-bar"><span>diagnosis &middot; confidence medium</span><span>illustrative</span></div>
+            <div class="demo-body">
+              <p>The 5xx rate on <code>api-1</code> rose right after the 09:12 deploy <button class="cite" data-ev="e1" type="button">[E1]</button>, and its pods are restarting on out-of-memory kills <button class="cite" data-ev="e2" type="button">[E2]</button>. The error log is dominated by one pattern <button class="cite" data-ev="e3" type="button">[E3]</button>.</p>
+              <p style="margin:0;color:var(--muted)">Likely cause: the new build exceeds its memory limit. Proposed fix: roll back the deployment, which waits for your approval.</p>
+            </div>
+          </div>
+          <ul class="ev" aria-label="Evidence">
+            <li id="e1"><b>E1</b><span>Recent deploys: <code>api</code> rolled out 09:12. 5xx rate vs last week: 6&times;.</span></li>
+            <li id="e2"><b>E2</b><span>Restarts and OOM kills: 7 in the last 20 minutes.</span></li>
+            <li id="e3"><b>E3</b><span>Error log patterns: <code>upstream timeout</code> is 82% of lines.</span></li>
+          </ul>
+        </div>
+        <p class="note-ill">Invented numbers, for illustration. Hover or focus a citation to see its source.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="signals">
+  <div class="wrap">
+    <p class="idx"><b>04</b> &nbsp;Signals</p>
+    <div>
+      <h2>The alert before the alert.</h2>
+      <p>Every series of your key signals is checked every five minutes, up to 2,000 per query, and scored for how close it is to trouble, with the reason in words. A resource heading for its limit within 24 hours opens an incident before anything fires.</p>
+      <div class="body split">
+        <div class="demo spark" role="img" aria-label="Illustrative line chart: disk usage rising toward a dashed limit line, with a shaded forecast band.">
+          <div class="demo-bar"><span>disk /var</span><span>illustrative</span></div>
+          <div class="demo-body">
+            <svg viewBox="0 0 400 130" aria-hidden="true">
+              <path class="band" d="M250 74 L390 24 L390 54 L250 86 Z"/>
+              <line class="limit" x1="10" y1="26" x2="390" y2="26"/>
+              <path class="line" pathLength="1" d="M10 112 C60 108 90 104 130 98 S200 86 250 80 S330 56 388 38"/>
+            </svg>
+            <p class="meta" style="margin:8px 0 0">full in ~11h, forecast band shown</p>
+          </div>
+        </div>
+        <figure class="shotcard">
+          <img src="img/signals.png" width="2880" height="1720" loading="lazy" alt="The Signals page: a disk forecast graph with the series, its usual range and the date it reaches its limit.">
+          <figcaption>Signals: every series, worst first, with the date it reaches its limit.</figcaption>
+        </figure>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="map">
+  <div class="wrap">
+    <p class="idx"><b>05</b> &nbsp;Service map</p>
+    <div>
+      <h2>It knows what depends on what.</h2>
+      <p>The model reads your approved docs, or a draw.io, Mermaid, PlantUML or Graphviz diagram, and proposes components and links with the quote behind each. You accept or reject. <em style="font-style:normal;color:var(--text)">Check live</em> marks connections as confirmed and flags a documented one it never sees. It never adds anything on its own.</p>
+      <figure class="shotcard body">
+        <img src="img/service-map.png" width="2880" height="1720" loading="lazy" alt="The service map in Knowledge: load balancers, services, databases and queues with their connections.">
+        <figcaption>Drafted from your documents, confirmed against what is running.</figcaption>
+      </figure>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="fit">
+  <div class="wrap">
+    <p class="idx"><b>06</b> &nbsp;Fit</p>
+    <div>
+      <h2>On top of your stack, not instead of it.</h2>
+      <p>Everything SupOps does with your observability tools is read-only. Nothing is installed on them or on your servers.</p>
+      <div class="body">
+        <dl style="margin:0">
+          <div class="int"><dt>reads from</dt><dd>Prometheus, Grafana, Alertmanager, Loki, Elasticsearch, Kubernetes, Slack</dd></div>
+          <div class="int"><dt>acts through</dt><dd>SSH (jump hosts supported), kubectl with a scoped service account</dd></div>
+          <div class="int"><dt>models</dt><dd>Gemini, Ollama, LM Studio, vLLM, LiteLLM, OpenRouter, any OpenAI-compatible endpoint</dd></div>
+          <div class="int"><dt>no access?</dt><dd>Advisory mode: it works from your description, screenshots and runbooks, and hands you the commands</dd></div>
+        </dl>
+        <div class="cols">
+          <div><h3>Advisory mode</h3><p>No SSH, no credentials. You get ranked causes, read-only checks, the fix and the rollback, each rated by the same risk engine.</p></div>
+          <div><h3>Runbook-aware</h3><p>Import PDF, Word and Markdown. Secrets are redacted, instruction-like text is flagged, and you review every item first.</p></div>
+          <div><h3>Stays in your network</h3><p>Credentials are encrypted at rest with AES-256-GCM. With a local model, nothing leaves your infrastructure.</p></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="start">
+  <div class="wrap">
+    <p class="idx"><b>07</b> &nbsp;Quickstart</p>
+    <div>
+      <h2>One container. Running in a few minutes.</h2>
+      <p>The API, live stream, web UI and database run in one container. It generates its own secrets on first run.</p>
+      <div class="body tabs">
+        <div role="tablist" aria-label="Install method">
+          <button role="tab" type="button">Docker</button>
+          <button role="tab" type="button">Kubernetes</button>
+          <button role="tab" type="button">From source</button>
+        </div>
+        <div role="tabpanel">
+          <pre class="code"><button class="btn small copy" type="button">Copy</button><code>git clone https://github.com/Ayyush-Maheshwari/SupOps.git
+cd SupOps
+docker compose up --build</code></pre>
+          <ol class="steps">
+            <li>Open <code>http://localhost:3001</code> and sign in as <code>admin@supops.local</code> / <code>supops</code>.</li>
+            <li><strong>Settings:</strong> paste a model API key (a free Gemini key works) and press Test connection.</li>
+            <li><strong>Targets:</strong> register a server or cluster. <strong>Investigate:</strong> describe a problem and press Start.</li>
+          </ol>
+        </div>
+        <div role="tabpanel">
+          <pre class="code"><button class="btn small copy" type="button">Copy</button><code>docker build -t supops:local .
+kubectl apply -f k8s/supops.yaml
+kubectl -n supops port-forward svc/supops 3001:80</code></pre>
+          <p style="color:var(--muted);margin:16px 0 0">One replica with a persistent volume. <a href="https://github.com/Ayyush-Maheshwari/SupOps/blob/main/k8s/README.md">k8s/README.md</a> covers importing the image into k3s and pinning the secrets.</p>
+        </div>
+        <div role="tabpanel">
+          <pre class="code"><button class="btn small copy" type="button">Copy</button><code>npm install
+cp .env.example .env     # set SUPOPS_MASTER_KEY and JWT_SECRET
+npm run seed
+npm run dev              # web on :3000, api on :3001</code></pre>
+          <p style="color:var(--muted);margin:16px 0 0">Needs Node.js 22 or newer.</p>
+        </div>
+        <p class="note-ill" style="margin-top:20px">Keep it on a private network or behind a VPN. Do not expose it to the internet as is.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec" id="faq">
+  <div class="wrap">
+    <p class="idx"><b>08</b> &nbsp;Questions</p>
+    <div>
+      <h2>An AI with root on prod?</h2>
+      <div class="body" style="margin-top:32px">
+        <details open><summary>Can it run commands on prod without me?</summary><div><p>Only read-only and low-risk commands run on their own. Anything that changes state waits for a person, and forbidden commands never run, whoever approves.</p></div></details>
+        <details><summary>What if a log line tries to prompt-inject it?</summary><div><p>Nothing the model reads or says can lower a risk tier, so the worst a successful injection buys is an extra approval prompt.</p></div></details>
+        <details><summary>Does it install anything on my servers?</summary><div><p>No. It reads your existing APIs and acts over SSH or kubectl with credentials you scope.</p></div></details>
+        <details><summary>What isn&rsquo;t built yet?</summary><div><p>Cloud accounts (AWS, GCP, Azure), GitHub/GitLab and CI/CD, multi-step scripts and rules learned from past denials are on the roadmap.</p></div></details>
+        <p style="margin-top:24px"><a class="link" href="faq.html">All 18 answers</a></p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="sec final">
+  <div class="wrap">
+    <p class="idx"><b>09</b> &nbsp;Verify</p>
+    <div>
+      <h2>Don&rsquo;t take our word for it. Read the risk engine.</h2>
+      <p>The rules and their test tables are in the open. <code>packages/core/src/risk</code> is the specification of what may run unattended.</p>
+      <div class="actions">
+        <a class="btn primary" href="https://github.com/Ayyush-Maheshwari/SupOps/tree/main/packages/core/src/risk">Read the source</a>
+        <a class="btn" href="#start">Run it yourself</a>
+      </div>
+    </div>
+  </div>
+</section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>SupOps, created by <a href="https://github.com/Ayyush-Maheshwari">Ayush Maheshwari</a>. Apache License 2.0.</span>
+    <span><a href="faq.html">FAQ</a> &middot; <a href="https://github.com/Ayyush-Maheshwari/SupOps/blob/main/SECURITY.md">Security</a> &middot; <a href="https://github.com/Ayyush-Maheshwari/SupOps/blob/main/CONTRIBUTING.md">Contributing</a></span>
+  </div>
+</footer>
+<script src="app.js" defer></script>
+</body>
+</html>

@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>SupOps: find the cause of an outage and fix it, with your approval</title>
+<meta name="description" content="SupOps works out why something broke, shows you the evidence, and proposes the fix. Nothing changes until you approve it. Open source and self-hosted.">
+<meta name="theme-color" content="#08090f">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&family=Outfit:wght@300..800&display=swap" rel="stylesheet">
+<link rel="icon" type="image/png" href="img/brand-mark.png">
+<link rel="stylesheet" href="landing.css">
+</head>
+<body>
+
+<header class="sticky top-0 z-50 border-b border-hairline bg-ground/85 backdrop-blur-xl">
+  <div class="mx-auto flex h-16 max-w-6xl items-center justify-between gap-4 px-4 sm:px-6">
+    <a href="#" aria-label="SupOps home"><img src="img/brand-lockup.png" width="851" height="256" alt="SupOps" class="h-7 w-auto"></a>
+    <nav class="hidden items-center gap-7 text-sm text-muted md:flex" aria-label="Main">
+      <a href="#how" class="hover:text-ink">How it works</a>
+      <a href="#safety" class="hover:text-ink">Safety</a>
+      <a href="#watch" class="hover:text-ink">Early warnings</a>
+      <a href="#start" class="hover:text-ink">Get started</a>
+      <a href="#faq" class="hover:text-ink">FAQ</a>
+    </nav>
+    <div class="flex items-center gap-2">
+      <a href="https://github.com/Ayyush-Maheshwari/SupOps" class="btn btn-ghost hidden sm:inline-flex">GitHub</a>
+      <a href="#start" class="btn btn-primary">Get started</a>
+    </div>
+  </div>
+</header>
+
+<main class="mx-auto max-w-6xl space-y-24 px-4 pb-24 pt-14 sm:px-6">
+
+  <!-- Hero -->
+  <section class="space-y-10">
+    <div class="reveal max-w-3xl space-y-5" style="--i:0">
+      <p class="label">Open-source, self-hosted</p>
+      <h1 class="text-4xl font-bold leading-[1.05] tracking-[-0.03em] sm:text-6xl">Find out why it broke. Fix it with your say-so.</h1>
+      <p class="max-w-2xl text-lg leading-relaxed text-muted sm:text-xl">SupOps investigates an alert, shows the evidence behind its answer, and proposes the fix. It never changes anything until you approve it.</p>
+      <div class="flex flex-wrap gap-3 pt-2">
+        <a href="#start" class="btn btn-primary">Get started</a>
+        <a href="#how" class="btn btn-ghost">See how it works</a>
+      </div>
+    </div>
+    <div class="tile reveal overflow-hidden p-2" style="--i:1">
+      <img src="img/dashboard.png" width="1920" height="1200" alt="The SupOps dashboard showing the latest run, approvals waiting, fleet health and recent runs." class="w-full rounded-[18px]">
+    </div>
+  </section>
+
+  <!-- How it works -->
+  <section id="how" class="space-y-8">
+    <div class="reveal max-w-2xl space-y-2">
+      <p class="label">How it works</p>
+      <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">From alert to fix in three steps.</h2>
+    </div>
+    <div class="grid gap-4 md:grid-cols-3">
+      <div class="tile tile-interactive reveal space-y-3 p-6" style="--i:0">
+        <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-blue ring-4 ring-blue/10"></span><h3 class="font-semibold">1. It looks into it</h3></div>
+        <p class="text-sm leading-relaxed text-muted">When an alert fires, SupOps runs read-only checks on your metrics and logs: CPU, memory, disk, restarts, recent deploys and error patterns. Related alerts are grouped into one incident.</p>
+      </div>
+      <div class="tile tile-interactive reveal space-y-3 p-6" style="--i:1">
+        <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-cyan ring-4 ring-cyan/10"></span><h3 class="font-semibold">2. It shows its work</h3></div>
+        <p class="text-sm leading-relaxed text-muted">You get a likely cause that points to the evidence for each claim. If it can't tell, it says so instead of guessing.</p>
+      </div>
+      <div class="tile tile-interactive reveal space-y-3 p-6" style="--i:2">
+        <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-amber ring-4 ring-amber/10"></span><h3 class="font-semibold">3. You decide</h3></div>
+        <p class="text-sm leading-relaxed text-muted">It proposes the exact command and why. Safe checks run on their own. Anything that changes a server waits for you to approve or reject.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Safety: approval demo -->
+  <section id="safety" class="space-y-8">
+    <div class="reveal max-w-2xl space-y-2">
+      <p class="label">Safety</p>
+      <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">You stay in control of every change.</h2>
+      <p class="text-muted">Try it. This is how a pending change looks, with invented data.</p>
+    </div>
+
+    <div class="grid items-stretch gap-4 lg:grid-cols-12">
+      <div class="tile reveal relative flex flex-col justify-between overflow-hidden lg:col-span-7" style="--i:0">
+        <div id="rail" class="rail bg-amber"></div>
+        <div>
+          <div class="flex flex-wrap items-center justify-between gap-2 border-b border-hairline px-6 py-4">
+            <div class="flex items-center gap-2.5">
+              <span id="dot" class="relative h-2.5 w-2.5 rounded-full bg-amber text-amber pulse-ring"></span>
+              <span id="status" class="text-sm font-medium text-amber">Needs approval</span>
+              <span class="chip border-red/30 bg-red/10 text-red">PROD</span>
+              <span class="font-mono text-xs text-muted">web-1</span>
+            </div>
+            <button type="button" onclick="resetDemo()" class="text-xs text-muted hover:text-ink">Replay</button>
+          </div>
+          <div class="space-y-4 p-6">
+            <div>
+              <p class="label mb-1">What was reported</p>
+              <p class="text-base font-medium">Checkout is returning errors and the disk on web-1 is almost full.</p>
+            </div>
+            <div class="rounded-inner border border-hairline bg-ground/60 p-4">
+              <p class="label mb-1.5">What it found</p>
+              <p class="text-sm leading-relaxed text-ink/90">An old debug log has grown to 48 GB and filled the disk <span class="font-mono text-blue-text">[E1]</span>, so the web server can no longer write <span class="font-mono text-blue-text">[E2]</span>.</p>
+            </div>
+            <div id="card" class="space-y-2 rounded-inner border border-amber/40 bg-amber/5 p-4">
+              <div class="flex items-center justify-between gap-2">
+                <span class="label">Proposed fix</span>
+                <span id="badge" class="chip border-red/30 bg-red/10 text-red">high</span>
+              </div>
+              <div class="overflow-x-auto rounded-lg border border-hairline bg-ground/80 p-3 font-mono text-xs sm:text-sm">truncate -s 0 /var/log/checkout-debug.old.log &amp;&amp; sudo systemctl reload nginx</div>
+              <p id="note" class="text-xs text-amber">Paused. Nothing has run yet.</p>
+            </div>
+          </div>
+        </div>
+        <div class="flex flex-wrap items-center gap-3 border-t border-hairline px-6 py-3.5 text-xs text-muted">
+          <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-muted"></span>3 checks ran on their own</span>
+          <span class="inline-flex items-center gap-1.5"><span class="h-2 w-2 rounded-full bg-amber"></span><span id="count">1 waiting on you</span></span>
+        </div>
+      </div>
+
+      <div class="tile reveal flex flex-col justify-between p-6 lg:col-span-5" style="--i:1">
+        <div class="space-y-4">
+          <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-amber ring-4 ring-amber/10"></span><h3 class="font-semibold">Approvals</h3></div>
+          <p class="text-sm leading-relaxed text-muted">An agent wanted to do something risky and stopped to ask. You see the exact command, what it is for, and why it was flagged.</p>
+          <ul class="space-y-2 rounded-inner border border-hairline bg-ground/60 p-4 text-sm">
+            <li class="flex justify-between gap-3"><span class="text-muted">Changes a service</span><span class="text-amber">needs approval</span></li>
+            <li class="flex justify-between gap-3"><span class="text-muted">Runs on a production server</span><span class="text-red">raised to high</span></li>
+            <li class="flex justify-between gap-3"><span class="text-muted">The agent says it is safe</span><span class="text-ink">cannot lower it</span></li>
+          </ul>
+        </div>
+        <div class="space-y-3 pt-6">
+          <div id="buttons" class="grid grid-cols-2 gap-3">
+            <button type="button" onclick="decide(true)" class="btn bg-green text-ground hover:bg-green/90">Approve</button>
+            <button type="button" onclick="decide(false)" class="btn border border-red/40 bg-red/10 text-red hover:bg-red/20">Reject</button>
+          </div>
+          <p id="audit" class="hidden rounded-inner border border-hairline bg-tile-2 px-4 py-3 text-sm" aria-live="polite"></p>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid gap-4 md:grid-cols-3">
+      <div class="tile reveal space-y-2 p-6" style="--i:0">
+        <div class="flex flex-wrap gap-1.5"><span class="chip border-muted/25 bg-muted/10 text-muted">read-only</span><span class="chip border-cyan/30 bg-cyan/10 text-cyan">low</span></div>
+        <h3 class="font-semibold">Runs on its own</h3>
+        <p class="text-sm text-muted">Looking, not touching: disk usage, service status, pod lists, logs.</p>
+      </div>
+      <div class="tile reveal space-y-2 p-6" style="--i:1">
+        <div class="flex flex-wrap gap-1.5"><span class="chip border-amber/30 bg-amber/10 text-amber">medium</span><span class="chip border-red/30 bg-red/10 text-red">high</span></div>
+        <h3 class="font-semibold">Waits for you</h3>
+        <p class="text-sm text-muted">Anything that restarts, deletes or changes something stops and asks first.</p>
+      </div>
+      <div class="tile reveal space-y-2 p-6" style="--i:2">
+        <div class="flex flex-wrap gap-1.5"><span class="chip border-red/60 bg-red/20 text-red">forbidden</span></div>
+        <h3 class="font-semibold">Never runs</h3>
+        <p class="text-sm text-muted">Wiping a disk, cutting off its own access, or handing the host to a container. Nobody can approve these.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- Early warnings -->
+  <section id="watch" class="space-y-8">
+    <div class="reveal max-w-2xl space-y-2">
+      <p class="label">Early warnings</p>
+      <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">Hear about it before it pages anyone.</h2>
+      <p class="text-muted">SupOps watches your key signals, learns what is normal for this time of day, and tells you when something is heading for a limit, such as a disk that will fill in 11 hours.</p>
+    </div>
+    <div class="tile reveal overflow-hidden p-2" style="--i:0">
+      <img src="img/signals.png" width="2880" height="1720" loading="lazy" alt="The Signals page: a disk forecast with the usual range and the date it reaches its limit." class="w-full rounded-[18px]">
+    </div>
+    <div class="grid gap-4 md:grid-cols-2">
+      <div class="tile tile-interactive reveal space-y-3 p-6" style="--i:0">
+        <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-cyan ring-4 ring-cyan/10"></span><h3 class="font-semibold">Knows what depends on what</h3></div>
+        <p class="text-sm leading-relaxed text-muted">SupOps builds a map of your services from your documents and architecture diagrams, then checks it against what is really running. You accept or reject every suggestion.</p>
+      </div>
+      <div class="tile tile-interactive reveal space-y-3 p-6" style="--i:1">
+        <div class="flex items-center gap-2.5"><span class="h-2 w-2 rounded-full bg-green ring-4 ring-green/10"></span><h3 class="font-semibold">Uses your runbooks</h3></div>
+        <p class="text-sm leading-relaxed text-muted">Import your PDFs, Word and Markdown docs. Passwords are removed, and you review everything before it is used.</p>
+      </div>
+    </div>
+    <div class="tile reveal overflow-hidden p-2" style="--i:0">
+      <img src="img/service-map.png" width="2880" height="1720" loading="lazy" alt="The service map: load balancers, services, databases and queues with their connections." class="w-full rounded-[18px]">
+    </div>
+  </section>
+
+  <!-- Works with -->
+  <section class="space-y-6">
+    <div class="reveal max-w-2xl space-y-2">
+      <p class="label">Works with what you have</p>
+      <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">Nothing to install on your servers.</h2>
+    </div>
+    <div class="grid gap-4 md:grid-cols-3">
+      <div class="tile reveal space-y-2 p-6" style="--i:0"><h3 class="font-semibold">Reads from</h3><p class="text-sm text-muted">Prometheus, Grafana, Alertmanager, Loki, Elasticsearch, Kubernetes and Slack.</p></div>
+      <div class="tile reveal space-y-2 p-6" style="--i:1"><h3 class="font-semibold">Fixes over</h3><p class="text-sm text-muted">SSH, or kubectl with a service account you control. No access? Advisory mode gives you the commands to run yourself.</p></div>
+      <div class="tile reveal space-y-2 p-6" style="--i:2"><h3 class="font-semibold">Any model</h3><p class="text-sm text-muted">Gemini, Ollama, LM Studio or any OpenAI-compatible service. Use a local model to keep everything in your network.</p></div>
+    </div>
+  </section>
+
+  <!-- Get started -->
+  <section id="start" class="tile reveal relative overflow-hidden p-8 sm:p-10" style="--i:0">
+    <div class="rail bg-blue"></div>
+    <div class="grid items-center gap-8 lg:grid-cols-2">
+      <div class="space-y-4">
+        <p class="label">Get started</p>
+        <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">Running in a few minutes.</h2>
+        <p class="text-sm leading-relaxed text-muted sm:text-base">Everything runs in one container and keeps its data in a Docker volume. You need Docker, and a model API key (a free Gemini key works).</p>
+        <ol class="space-y-2 text-sm text-muted">
+          <li><span class="font-medium text-ink">1.</span> Run the command and open <span class="font-mono text-xs text-ink">localhost:3001</span>.</li>
+          <li><span class="font-medium text-ink">2.</span> Sign in as <span class="font-mono text-xs text-ink">admin@supops.local</span> / <span class="font-mono text-xs text-ink">supops</span>.</li>
+          <li><span class="font-medium text-ink">3.</span> Paste your model key in Settings, add a server under Targets, then describe a problem in Investigate.</li>
+        </ol>
+      </div>
+      <div class="rounded-inner border border-edge bg-ground p-5">
+        <div class="mb-3 flex items-center justify-between border-b border-hairline pb-3 text-xs text-muted">
+          <span>Terminal</span>
+          <button type="button" onclick="copyCmd(this)" class="btn btn-primary min-h-0 px-3 py-1 text-xs">Copy</button>
+        </div>
+        <pre id="cmd" class="overflow-x-auto font-mono text-xs leading-relaxed text-ink sm:text-sm">git clone https://github.com/Ayyush-Maheshwari/SupOps.git
+cd SupOps
+docker compose up --build</pre>
+        <p class="mt-3 text-xs text-muted">Keep it on a private network or behind a VPN.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- FAQ -->
+  <section id="faq" class="space-y-6">
+    <div class="reveal max-w-2xl space-y-2">
+      <p class="label">FAQ</p>
+      <h2 class="text-3xl font-bold tracking-[-0.02em] sm:text-4xl">Questions people ask first.</h2>
+    </div>
+    <div class="space-y-3">
+      <details class="tile" open>
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">Can it change my servers without asking?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>No. Read-only checks run on their own. Anything that changes something waits for your approval, and a few things, like wiping a disk, can never run at all. A production server raises the bar further.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">What if something it reads tries to trick it?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>A log line that says &ldquo;this is pre-approved&rdquo; changes nothing. Neither the agent nor the text it reads can lower how risky an action is, so the worst outcome is one more approval prompt.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">Do I have to give it SSH access?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>No. In Advisory mode it works from your description, screenshots and runbooks, and gives you ranked causes, read-only checks, the fix and how to roll it back. You run the commands yourself.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">Does my data leave my network?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>SupOps runs on your own infrastructure and sends what a run needs to the model you choose. With a local model such as Ollama, that stays inside your network. Server passwords and keys are encrypted at rest.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">What if it can't find the cause?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>It says so. &ldquo;Inconclusive&rdquo; is an allowed answer, and checks it couldn't run are listed as not measured.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">Is there a record of what happened?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>Yes. Every run keeps its commands, output and outcome, and the Approvals page shows who approved what. You can export any run as a PDF or Markdown report.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">What can't it do yet?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>Cloud accounts (AWS, GCP, Azure), GitHub/GitLab and CI/CD, and multi-step scripts are planned but not available today.</p></div>
+      </details>
+      <details class="tile">
+        <summary class="flex items-center justify-between gap-4 px-6 py-5"><h3 class="font-semibold">What does it cost?</h3><span class="plus font-mono text-muted transition-transform" aria-hidden="true">+</span></summary>
+        <div class="space-y-2 px-6 pb-6 text-sm leading-relaxed text-muted"><p>SupOps is free and open source under the Apache License 2.0. You pay only for whichever model service you choose to connect, and nothing if you run a local one.</p></div>
+      </details>
+    </div>
+  </section>
+</main>
+
+<footer class="border-t border-hairline bg-tile/60 px-4 py-10 sm:px-6">
+  <div class="mx-auto flex max-w-6xl flex-col items-center justify-between gap-4 text-sm text-muted sm:flex-row">
+    <span>SupOps &middot; created by Ayush Maheshwari &middot; Apache License 2.0</span>
+    <div class="flex flex-wrap items-center justify-center gap-6">
+      <a href="#how" class="hover:text-ink">How it works</a>
+      <a href="#faq" class="hover:text-ink">FAQ</a>
+      <a href="https://github.com/Ayyush-Maheshwari/SupOps/blob/main/SECURITY.md" class="hover:text-ink">Security</a>
+      <a href="https://github.com/Ayyush-Maheshwari/SupOps" class="text-blue-text hover:underline">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+var reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+var els = document.querySelectorAll('.reveal');
+if ('IntersectionObserver' in window && !reduce) {
+  var io = new IntersectionObserver(function (entries) {
+    entries.forEach(function (e) { if (e.isIntersecting) { e.target.classList.add('reveal-in'); io.unobserve(e.target); } });
+  }, { threshold: 0.12 });
+  els.forEach(function (el) { io.observe(el); });
+} else { els.forEach(function (el) { el.classList.add('reveal-in'); }); }
+
+function $(id) { return document.getElementById(id); }
+
+function decide(ok) {
+  var c = ok ? 'green' : 'red';
+  $('buttons').classList.add('hidden');
+  $('rail').className = 'rail bg-' + c;
+  $('dot').className = 'relative h-2.5 w-2.5 rounded-full bg-' + c;
+  $('status').className = 'text-sm font-medium text-' + c;
+  $('status').textContent = ok ? 'Succeeded' : 'Rejected';
+  $('card').className = 'space-y-2 rounded-inner border p-4 border-' + c + '/40 bg-' + c + '/5';
+  $('badge').textContent = ok ? 'high · approved' : 'high · rejected';
+  $('note').className = 'text-xs text-' + c;
+  $('note').textContent = ok ? 'Ran, then the outcome was checked and recorded.' : 'Nothing ran. The agent can suggest something else.';
+  $('count').textContent = ok ? '1 approved' : '1 rejected';
+  var a = $('audit'); a.classList.remove('hidden');
+  a.textContent = ok ? 'Approved by you and recorded.' : 'Rejected by you and recorded. Nothing changed on the server.';
+}
+function resetDemo() {
+  $('buttons').classList.remove('hidden');
+  $('rail').className = 'rail bg-amber';
+  $('dot').className = 'relative h-2.5 w-2.5 rounded-full bg-amber text-amber pulse-ring';
+  $('status').className = 'text-sm font-medium text-amber';
+  $('status').textContent = 'Needs approval';
+  $('card').className = 'space-y-2 rounded-inner border border-amber/40 bg-amber/5 p-4';
+  $('badge').textContent = 'high';
+  $('note').className = 'text-xs text-amber';
+  $('note').textContent = 'Paused. Nothing has run yet.';
+  $('count').textContent = '1 waiting on you';
+  $('audit').classList.add('hidden');
+}
+function copyCmd(btn) {
+  var node = $('cmd'), text = node.textContent;
+  var done = function (m) { btn.textContent = m; setTimeout(function () { btn.textContent = 'Copy'; }, 1600); };
+  var fallback = function () {
+    var r = document.createRange(); r.selectNodeContents(node);
+    var s = getSelection(); s.removeAllRanges(); s.addRange(r);
+    var ok = false; try { ok = document.execCommand('copy'); } catch (e) {}
+    done(ok ? 'Copied' : 'Press Ctrl+C');
+  };
+  if (navigator.clipboard && window.isSecureContext) navigator.clipboard.writeText(text).then(function () { done('Copied'); }, fallback);
+  else fallback();
+}
+</script>
+</body>
+</html>
